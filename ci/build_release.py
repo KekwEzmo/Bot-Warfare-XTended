@@ -2,7 +2,7 @@
 """
 Builds the Bot Warfare XTended release zip, laid out like the official Bot Warfare release:
 
-    out/BotWarfareXTended-1.0.zip
+    out/BotWarfareXTended-1.1.zip
         install.bat        copies the iwd into %LOCALAPPDATA%\\Plutonium\\storage\\iw5\\
         README.txt
         bots.txt           bot names, copied only if you don't have one yet
@@ -20,7 +20,7 @@ import zipfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT_DIR = os.path.join(ROOT, "out")
 IWD_NAME = "z_svr_bots.iwd"
-ZIP_NAME = "BotWarfareXTended-1.0.zip"
+ZIP_NAME = "BotWarfareXTended-1.1.zip"
 
 
 def gsc_files():

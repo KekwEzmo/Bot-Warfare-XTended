@@ -56,14 +56,14 @@ Bot Warfare XTended is an unofficial build of [Bot Warfare](https://github.com/i
   - Bots call out enemies, use voice callouts, play in parties and react to the score and to being last alive.
   - Bots make mistakes: slow turns when surprised, panic spraying, badly timed reloads.
   - Optional adaptive difficulty that keeps you near a target K/D.
-  - Bots chat as millennials, zoomers, Gen Alpha or boomers. They rage, bait, talk to each other, react to special kills and reply to you, without flooding the chat.
+  - Bots chat with different personalities! They react to what happens in the match, rage, bait, start flame wars, talk among themselves, hold short conversations with you and flame you back, without flooding the chat.
   - 300 bot names, presets (casual, competitive, chaos, off) and a commented settings file.
   - A new menu look with Realism and Social tabs.
   - Fixes for several bugs in the original bot code.
 
 ## Installation
 0. Make sure that [PlutoniumIW5](https://plutonium.pw/docs/install/#iw5) is installed, updated and working properly.
-1. Extract `BotWarfareXTended-1.0.zip` anywhere on your computer.
+1. Extract `BotWarfareXTended-1.1.zip` anywhere on your computer.
 2. Run `install.bat`. This copies the mod, `bots.txt` and `xtended.cfg` to your PlutoniumIW5 storage folder (existing `bots.txt` and `xtended.cfg` are kept).
 3. Start a map and play! Installing replaces an existing Bot Warfare install.
 
@@ -74,11 +74,11 @@ On Linux, copy the files into `drive_c/users/<you>/AppData/Local/Plutonium/stora
 ### Menu Usage
 - You can open the menu by pressing the Action Slot 1 key (default 'N', nightvision key).
 
-- You can navigate the options by pressing your movement keys (default WASD), and you can select options by pressing your jump key (default SPACE).
+- You can navigate the options by pressing your movement keys (default WASD), and you can select options by pressing your jump key (default SPACE). The mouse works too: scroll to move, left click to select, right click to go back.
 
 - Pressing the menu button again closes menus.
 
-- The **Realism** and **Social** tabs toggle every XTended feature. **Show bot status** lists what each bot is and what it's doing.
+- Every tab opens short pages (press the menu key to go back a page). **Realism** and **Social** toggle every XTended feature, **Realism > Bot status** shows what each bot is and what it's doing.
 
 ### Presets and settings file
 - `bots_real_preset` sets many options at once: `casual`, `competitive`, `chaos`, `off`, or `custom` (set things yourself).
@@ -92,6 +92,7 @@ On Linux, copy the files into `drive_c/users/<you>/AppData/Local/Plutonium/stora
 | bots_main_GUIDs                  | A comma separated list of GUIDs of players who will be given host.                          |               |
 | bots_main_waitForHostTime        | How many seconds to wait for the host player to connect before adding bots to the match.    | 10            |
 | bots_main_menu                   | Enable the in-game menu for hosts.                                                          | 1             |
+| bots_menu_theme                  | Menu colours: `xtended`, `classic`, `ocean`, `toxic`, `royal` or `mono`. Also in Settings > Menu theme. | xtended    |
 | bots_main_debug                  | Enable the in-game waypoint editor at start of the game, or enable bot event prints. <ul><li>`0` - disable</li><li>`1` - for just debug events</li><li>`2` - for every event</li><ul> | 0 |
 | bots_main_kickBotsAtEnd          | Kick the bots at the end of a match.                                                        | 0             |
 | bots_main_chat                   | The rate bots will chat at, set to 0 to disable.                                            | 1.0           |
@@ -112,6 +113,8 @@ On Linux, copy the files into `drive_c/users/<you>/AppData/Local/Plutonium/stora
 | bots_skill_allies_med            | When `bots_skill` is set to `8`, the amount of medium difficulty bots to set on the allies team. The remaining bots on the team will be set to easy difficulty. | 0 |
 | bots_skill_min                   | The minimum difficulty level for the bots.                                                     | 1          |
 | bots_skill_max                   | The maximum difficulty level for the bots.                                                     | 7          |
+| bots_skill_players               | Difficulty by number of human players, overriding `bots_skill`. `3:2,7:4,99:6` means up to 3 players skill 2, up to 7 skill 4, more skill 6. Empty to turn off. |            |
+| bots_xp_multiplier               | XP for killing a bot. Above `1` gives bonus XP on top of the normal kill XP (e.g. `2` doubles it). | 1.0        |
 | bots_loadout_reasonable          | If the bots should filter bad performing create-a-class selections.                            | 0          |
 | bots_loadout_allow_op            | If the bots should be able to use overpowered and annoying create-a-class selections.          | 1          |
 | bots_loadout_rank                | What rank to set the bots.<ul><li>`-1` - Average of all players in the match.</li><li>`0` - All random.</li><li>`1` or higher - Sets the bots' rank to this.</li></ul> | -1 |
@@ -128,6 +131,8 @@ On Linux, copy the files into `drive_c/users/<you>/AppData/Local/Plutonium/stora
 | bots_play_killstreak             | If the bots can call in killstreaks.                                                           | 1          |
 | bots_play_ads                    | If the bots can aim down sights.                                                               | 1          |
 | bots_play_aim                    | If the bots can aim.                                                                           | 1          |
+| bots_play_crouchonly             | Bots only ever crouch: no standing, sprinting, jumping or drop shots.                          | 0          |
+| bots_play_thirdperson_aim        | In third person (`camera_thirdPerson`), bots aim from the camera. Set to `0` to aim from the eye like first person if their aim is off. | 1          |
 | bots_real_traits                 | Bots get a personality (rusher, balanced, cautious, support) that shapes how they play and which guns and killstreaks they pick. Loadouts are picked when a bot joins, so re-add bots after changing this. | 1 |
 | bots_real_aim                    | Bots aim like humans: they overshoot new targets, flinch when hit and aim worse while moving.  | 1          |
 | bots_real_hearing                | Bots react to gunfire and explosions they hear (suppressors cut the range).                    | 1          |
@@ -140,18 +145,21 @@ On Linux, copy the files into `drive_c/users/<you>/AppData/Local/Plutonium/stora
 | bots_real_teamintel              | Bots tell nearby bot teammates where they spotted an enemy; teammates look over or move up.    | 1          |
 | bots_real_matchaware             | Bots push when losing late, play safe when winning late, and play slow when last alive in S&D. | 1          |
 | bots_real_slipups                | Bots make human mistakes: slow turns when shot from behind, panic spraying, reloading right after kills. | 1          |
+| bots_real_recoil                 | Bots' aim climbs and wanders while they spray, like recoil. Harder bots control it better.     | 1          |
 | bots_real_chat                   | Bots take time to type, chat in their own style (lowercase, dropped full stops, the odd typo) and reply to players. | 1          |
 | bots_real_voice                  | Bots use voice callouts that match what they're doing (enemy spotted, need reinforcements, fall back, follow me, suppressing fire). Team modes only. | 1          |
 | bots_real_avenge                 | Bots go after whoever killed a teammate near them.                                             | 1          |
 | bots_real_adaptive               | Enemy bots adjust their skill (up to 3 steps either way) to keep human players near `bots_real_adaptive_kd`. Checked every 30 seconds. | 0          |
 | bots_real_adaptive_kd            | The K/D adaptive difficulty aims to keep human players at.                                     | 1.2        |
 | bots_real_banter                 | Bots talk to each other, react to special kills (knife, headshot, long shot, multikill...), say "you again" and praise the human MVP. | 1          |
+| bots_real_reactive               | Bots react in chat to the match (first blood, streaks, objectives, killstreaks, the lead, joins and leaves), talk about weapons and chat on their own. | 1          |
 | bots_real_parties                | Some bots group up in parties of 2-3 on the same team that follow, avenge and cheer each other. | 1          |
 | bots_real_churn                  | Deeply tilted bots sometimes rage quit and a new bot joins later; a bot sometimes leaves at the end of a match. | 1          |
 | bots_real_preaim                 | Bots glance at corners and long sightlines while moving.                                       | 1          |
 | bots_real_turrets                | Bots stay and fight on mounted turrets instead of hopping off, and sometimes walk over to a free one. | 1          |
 | bots_real_rage                   | Percent of a tilted bot's death messages that are rage.                                        | 50         |
 | bots_real_bait                   | Percent chance a bot taunts a human player it kills (cocky bots add 25).                       | 30         |
+| bots_real_flame                  | Percent chance a bot killing a bot starts a flame war: taunts, insults, all caps meltdowns and bystanders piling on. The two then hunt each other. | 40         |
 | bots_real_mood_streak            | Kills or deaths in a row before a bot gets cocky or tilted (at least 2).                       | 3          |
 | bots_real_preset                 | Applies a group of settings: `off`, `casual`, `competitive`, `chaos`, or `custom` to set things yourself. | custom     |
 
@@ -159,15 +167,35 @@ On Linux, copy the files into `drive_c/users/<you>/AppData/Local/Plutonium/stora
 - Only tested on Linux (Plutonium under Wine/Proton), not yet on Windows.
 - Leaving bots are kicked with `EXE_DISCONNECTED`, which may show as raw text.
 - The Plutonium adapter has no file access, so waypoint `.csv` files aren't loaded or saved.
+- Bots only navigate properly on maps with waypoints: the 42 maps in `scripts/mp/` (all standard and DLC maps). On bonus and custom maps without waypoints they wander.
 - Mounted turrets are rare on standard MW3 maps.
 
 ## Changelog
+- XTended 1.1
+  - Fixes for the open upstream Bot Warfare issues:
+  - Fixed slow-motion lag on big maps like Liberation and Gulch: finding the nearest visible waypoint traced to every waypoint on the map, now it checks the 12 closest (#119)
+  - Bots no longer crouch all the time while moving, only where a waypoint calls for it or by their crouch trait (#120)
+  - Bots pick a realistic class mix (mostly assault and SMG) instead of an even spread (#120)
+  - Bots holding a pistol switch to their primary for targets further than 700 units (#120)
+  - Bots shoot at air killstreaks about half as often, instead of almost always (#120)
+  - Bots follow other players far less (#120)
+  - Fixed bots never using killstreaks they earned before dying, the killstreak weapon is given back first (#106)
+  - Fixed third person sniper aim for snipers not caught by the old check, and added `bots_play_thirdperson_aim` to aim from the eye instead (#126, #118)
+  - Added bot recoil: aim climbs and wanders while spraying, better bots control it, `bots_real_recoil` (#59, #121)
+  - Added a crouch-only mode, `bots_play_crouchonly` (#128)
+  - Added difficulty by number of human players, `bots_skill_players` (#45)
+  - Added bonus XP for killing bots, `bots_xp_multiplier` (#114)
+  - New toggles are in the menu: crouch only and third person aim under Settings, recoil under Realism
+  - Documented that bonus and custom maps have no waypoints (#116, #115)
+
 - XTended 1.0 (based on v2.3.0)
   - Added personalities, human aim, hearing, retreating, moods, counter-picking, hiding from air support, grudges, camping spot memory, team intel, match awareness, slip-ups, avenging, voice callouts, pre-aiming, parties, lobby churn, turret use and adaptive difficulty
-  - Added chat generations, raging, baiting, bot-to-bot banter, special-kill lines and replies to players
+  - Added chat generations, raging, baiting, bot-to-bot banter and flame wars, special-kill lines and replies to players
+  - Bots react in chat to the match, talk about weapons, greet players and chat on their own
+  - Bots hold short conversations with players (k/d, 1v1, lag, loadouts, maps...) and with each other
   - Bot chat is rate limited, bots take time to type, dated chat lines refreshed
   - Added 300 bot names, presets and `xtended.cfg`
-  - New menu look with Realism and Social tabs
+  - New menu look with Realism and Social tabs, six colour themes and mouse controls
   - Fixed bots giving up on objectives, crates and turrets over a match
   - Fixed teammates never being alerted when a bot gets shot
   - Fixed thermal scopes letting bots target turrets and equipment through walls
@@ -175,6 +203,7 @@ On Linux, copy the files into `drive_c/users/<you>/AppData/Local/Plutonium/stora
   - Fixed Domination bots heading for flags their team owns
   - Fixed the last bots alive in S&D not playing the objective
   - Damaged waypoint files fall back to the built-in waypoints
+  - Performance: bots check field of view before line-of-sight traces, and shared or cached work replaces per-bot scans
 
 - v2.3.0
   - Fixed bots aiming in ac130/chopper being broken at times

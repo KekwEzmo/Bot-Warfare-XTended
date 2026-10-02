@@ -2182,28 +2182,45 @@ RemoveWaypointUsage( wp, team )
 */
 GetNearestWaypointWithSight( pos )
 {
-	candidate = undefined;
-	dist = 2147483647;
+	// #119: this used to trace to every waypoint on the map, hundreds of traces per path on big maps
+	// like Liberation and Gulch. Now only the nearest few are traced, nearest first.
+	candidates = NewHeap( ::NearerWaypointFirst );
 	
 	for ( i = level.waypoints.size - 1; i >= 0; i-- )
 	{
-		if ( !bullettracepassed( pos + ( 0, 0, 15 ), level.waypoints[ i ].origin + ( 0, 0, 15 ), false, undefined ) )
-		{
-			continue;
-		}
-		
 		curdis = distancesquared( level.waypoints[ i ].origin, pos );
 		
-		if ( curdis > dist )
+		if ( curdis > 2048 * 2048 )
 		{
 			continue;
 		}
 		
-		dist = curdis;
-		candidate = i;
+		c = spawnstruct();
+		c.index = i;
+		c.dist = curdis;
+		candidates HeapInsert( c );
 	}
 	
-	return candidate;
+	for ( traces = 0; traces < 12 && candidates.data.size; traces++ )
+	{
+		c = candidates.data[ 0 ];
+		candidates HeapRemove();
+		
+		if ( bullettracepassed( pos + ( 0, 0, 15 ), level.waypoints[ c.index ].origin + ( 0, 0, 15 ), false, undefined ) )
+		{
+			return c.index;
+		}
+	}
+	
+	return undefined;
+}
+
+/*
+	Heap comparator, nearest waypoint candidate first.
+*/
+NearerWaypointFirst( item, item2 )
+{
+	return item.dist < item2.dist;
 }
 
 /*

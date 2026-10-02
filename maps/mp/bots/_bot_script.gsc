@@ -618,6 +618,36 @@ chooseRandomPrimary()
 		triesLeft = 100;
 	}
 	
+	// without a personality preference, weight the weapon types like a real lobby
+	// (assault rifles and smgs mostly, few snipers and shotguns)
+	wantedClass = undefined;
+	weightTries = 0;
+	
+	if ( triesLeft <= 0 )
+	{
+		roll = randomint( 100 );
+		wantedClass = "weapon_shotgun";
+		
+		if ( roll < 40 )
+		{
+			wantedClass = "weapon_assault";
+		}
+		else if ( roll < 70 )
+		{
+			wantedClass = "weapon_smg";
+		}
+		else if ( roll < 80 )
+		{
+			wantedClass = "weapon_lmg";
+		}
+		else if ( roll < 90 )
+		{
+			wantedClass = "weapon_sniper";
+		}
+		
+		weightTries = 100;
+	}
+	
 	while ( true )
 	{
 		primary = random( primaries );
@@ -627,6 +657,15 @@ chooseRandomPrimary()
 			triesLeft--;
 			
 			if ( !isdefined( preferred[ getweaponclass( primary ) ] ) )
+			{
+				continue;
+			}
+		}
+		else if ( weightTries > 0 )
+		{
+			weightTries--;
+			
+			if ( getweaponclass( primary ) != wantedClass )
 			{
 				continue;
 			}
@@ -2339,6 +2378,25 @@ fire_current_weapon()
 }
 
 /*
+	Changes to a killstreak weapon, giving it back first if the bot doesn't have it.
+	After dying, earned killstreaks lose their weapon, which is why bots never used them again.
+*/
+changeToKillstreakWeapon( weap )
+{
+	if ( !isdefined( weap ) || weap == "none" )
+	{
+		return false;
+	}
+	
+	if ( !self hasweapon( weap ) )
+	{
+		self giveweapon( weap );
+	}
+	
+	return self changeToWeapon( weap );
+}
+
+/*
 	Changes to the weap
 */
 changeToWeapon( weap )
@@ -2500,7 +2558,7 @@ follow_target()
 			continue;
 		}
 		
-		if ( randomint( 100 ) > self.pers[ "bots" ][ "behavior" ][ "follow" ] * 5 )
+		if ( randomint( 100 ) > self.pers[ "bots" ][ "behavior" ][ "follow" ] * 2 )
 		{
 			continue;
 		}
@@ -2736,7 +2794,8 @@ bot_think_follow()
 	
 	for ( ;; )
 	{
-		wait randomintrange( 3, 5 );
+		// thinking about following less often (was every 3-5 seconds)
+		wait randomintrange( 6, 10 );
 		
 		if ( self HasScriptGoal() || self.bot_lock_goal || self HasScriptAimPos() )
 		{
@@ -5297,6 +5356,14 @@ doReloadCancel_loop()
 			continue;
 		}
 		
+		// only cancel into another real gun, never a pistol or launcher
+		cls = getweaponclass( weapon );
+		
+		if ( cls == "weapon_pistol" || cls == "weapon_machine_pistol" || cls == "weapon_projectile" )
+		{
+			continue;
+		}
+		
 		weap = weapon;
 		break;
 	}
@@ -5312,6 +5379,12 @@ doReloadCancel_loop()
 	wait 0.25;
 	self thread changeToWeapon( curWeap );
 	wait 2;
+	
+	// make sure the bot actually ended up back on its gun
+	if ( self getcurrentweapon() != curWeap && self hasweapon( curWeap ) )
+	{
+		self thread changeToWeapon( curWeap );
+	}
 }
 
 /*
@@ -5371,6 +5444,35 @@ bot_weapon_think_loop( data )
 			}
 			
 			return;
+		}
+	}
+	
+	// fighting at range with a pistol out: back to the primary
+	fightTarget = undefined;
+	
+	if ( hasTarget )
+	{
+		fightTarget = self getThreat();
+	}
+	
+	if ( isdefined( fightTarget ) && isplayer( fightTarget ) && distancesquared( self.origin, fightTarget.origin ) > 700 * 700 )
+	{
+		curClass = getweaponclass( curWeap );
+		
+		if ( curClass == "weapon_pistol" || curClass == "weapon_machine_pistol" )
+		{
+			primaries = self getweaponslistprimaries();
+			
+			for ( i = 0; i < primaries.size; i++ )
+			{
+				cls = getweaponclass( primaries[ i ] );
+				
+				if ( primaries[ i ] != curWeap && self getammocount( primaries[ i ] ) && cls != "weapon_pistol" && cls != "weapon_machine_pistol" && cls != "weapon_projectile" )
+				{
+					self thread changeToWeapon( primaries[ i ] );
+					return;
+				}
+			}
 		}
 	}
 	
@@ -5480,7 +5582,8 @@ bot_target_vehicle_loop()
 		return;
 	}
 	
-	targets = maps\mp\_stinger::gettargetlist();
+	// shared list, refreshed at most twice a second for all bots
+	targets = maps\mp\bots\_bot_realism::getAirTargets();
 	
 	if ( !targets.size )
 	{
@@ -5545,7 +5648,8 @@ bot_target_vehicle_loop()
 			return;
 		}
 		
-		if ( !isdefined( rocketAmmo ) && self BotGetRandom() < 90 )
+		// about half the bots shoot air support with their guns, it used to be one in ten
+		if ( !isdefined( rocketAmmo ) && self BotGetRandom() < 50 )
 		{
 			return;
 		}
@@ -5950,7 +6054,7 @@ bot_killstreak_think_loop( data )
 			self BotStopMoving( true );
 			self SetScriptAimPos( forwardTrace[ "position" ] );
 			
-			if ( !self changeToWeapon( ksWeap ) )
+			if ( !self changeToKillstreakWeapon( ksWeap ) )
 			{
 				self BotStopMoving( false );
 				self ClearScriptAimPos();
@@ -5979,7 +6083,7 @@ bot_killstreak_think_loop( data )
 			
 			self BotRandomStance();
 			self BotStopMoving( true );
-			self changeToWeapon( ksWeap );
+			self changeToKillstreakWeapon( ksWeap );
 			
 			wait 3;
 			self BotStopMoving( false );
@@ -6031,7 +6135,7 @@ bot_killstreak_think_loop( data )
 			self BotRandomStance();
 			self BotStopMoving( true );
 			
-			if ( self changeToWeapon( ksWeap ) )
+			if ( self changeToKillstreakWeapon( ksWeap ) )
 			{
 				wait 1;
 				
@@ -6061,7 +6165,7 @@ bot_killstreak_think_loop( data )
 			self BotStopMoving( true );
 			self SetScriptAimPos( forwardTrace[ "position" ] );
 			
-			if ( !self changeToWeapon( ksWeap ) )
+			if ( !self changeToKillstreakWeapon( ksWeap ) )
 			{
 				self BotStopMoving( false );
 				self ClearScriptAimPos();
@@ -6130,7 +6234,7 @@ bot_killstreak_think_loop( data )
 			self BotStopMoving( true );
 			self SetScriptAimPos( forwardTrace[ "position" ] );
 			
-			if ( !self changeToWeapon( ksWeap ) )
+			if ( !self changeToKillstreakWeapon( ksWeap ) )
 			{
 				self BotStopMoving( false );
 				self ClearScriptAimPos();
@@ -6234,7 +6338,7 @@ bot_killstreak_think_loop( data )
 					
 					self BotNotifyBotEvent( "killstreak", "call", streakName, location, directionYaw );
 					
-					if ( self changeToWeapon( ksWeap ) )
+					if ( self changeToKillstreakWeapon( ksWeap ) )
 					{
 						wait 1;
 						

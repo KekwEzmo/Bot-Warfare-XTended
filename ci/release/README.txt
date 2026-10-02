@@ -1,5 +1,5 @@
 ==============================================================
-   BOT WARFARE XTENDED 1.0  -  for PlutoniumIW5 (MW3)
+   BOT WARFARE XTENDED 1.1  -  for PlutoniumIW5 (MW3)
 ==============================================================
 Bot Warfare XTended adds playable AI to Modern Warfare 3 multiplayer,
 with bots that play more like people: personalities, moods, grudges,
@@ -14,7 +14,7 @@ The original project is at https://github.com/ineedbots/iw5_bot_warfare
 2. Run 'install.bat'. This copies z_svr_bots.iwd to %LOCALAPPDATA%\Plutonium\storage\iw5\
    If you already had Bot Warfare installed, this replaces it (same file name).
 3. Start PlutoniumIW5 and load a map. You'll get a "Welcome to Bot Warfare XTended" message,
-   and the menu's footer shows "Bot Warfare XTended 1.0".
+   and the menu's footer shows "Bot Warfare XTended 1.1".
 
 To uninstall, delete z_svr_bots.iwd from %LOCALAPPDATA%\Plutonium\storage\iw5\
 To go back to the official version, install the official release again.
@@ -23,8 +23,11 @@ To go back to the official version, install the official release again.
 - Open the menu with the Action Slot 1 key (default 'N', nightvision key).
 - Navigate with your movement keys (default WASD), select with your jump key (default SPACE).
 - Pressing the menu button again closes menus.
-- The "Realism" tab has a Preset selector and the behaviour toggles, the "Social" tab
-  has the chat and social toggles.
+- Every tab opens short pages, press the menu key to go back a page.
+- Mouse: scroll to move, left click to select, right click to go back.
+- Settings > Menu theme switches between XTended, Classic, Ocean, Toxic, Royal and Mono.
+- "Realism" has the Preset, Behaviour and Tactics pages and Bot status (pick a bot to see
+  what it's doing). "Social" has the Chat and Players pages.
 
 ## Realism features
 Each one is on by default and has its own dvar (1 = on, 0 = off):
@@ -80,6 +83,13 @@ Each one is on by default and has its own dvar (1 = on, 0 = off):
 - bots_real_preset: casual, competitive, chaos, off, or custom (default, set things yourself).
   Pick it in the Realism tab. Flipping any single toggle switches back to custom.
 - Rage, bait and mood tuning: bots_real_rage (50), bots_real_bait (30), bots_real_mood_streak (3).
+- Reactive chat: bots_real_reactive. Bots react to first blood, streaks, objectives, killstreaks,
+  the lead and players joining, complain about your weapon, keep talking once you talk to them,
+  flame you back if you trash talk them, and chat on their own now and then.
+  They hold short conversations with you (k/d, 1v1, lag, loadouts, maps, "are you a bot"...)
+  and with each other (lag, the map, overpowered guns, mw2, bad aim...).
+- Flame wars: bots_real_flame (40) is the chance a bot killing a bot starts one. They go back and
+  forth from taunts to all caps meltdowns, bystanders pile on, and the two hunt each other after.
 - Settings reset when the game restarts. The installer puts xtended.cfg in your Plutonium storage
   folder with every setting and a comment for each. Edit it, then type "exec xtended.cfg" in the
   console, or add +exec xtended.cfg to your launch options.
@@ -100,6 +110,17 @@ The full list is in the console (~).
 Set 'bots_main_debug 2' in the console to see every bot event as it happens.
 
 ## Changelog
+- XTended 1.1
+ - Fixed slow-motion lag on big maps like Liberation and Gulch
+ - Bots no longer crouch all the time, pick a realistic class mix, follow players less,
+   switch off pistols at range and shoot at air killstreaks about half as often
+ - Fixed bots never using killstreaks they earned before dying
+ - Fixed third person sniper aim (bots_play_thirdperson_aim to aim from the eye instead)
+ - Added bot recoil (bots_real_recoil), crouch-only mode (bots_play_crouchonly),
+   difficulty by player count (bots_skill_players) and bonus XP for killing bots
+   (bots_xp_multiplier)
+ - Bonus and custom maps have no waypoints, bots only navigate the standard and DLC maps
+
 - XTended 1.0 (based on Bot Warfare 2.3.0)
  - New menu look: dark translucent bars, orange highlights, ON/OFF toggles
  - Bot chat is rate limited, bots take time to type and type in their own style

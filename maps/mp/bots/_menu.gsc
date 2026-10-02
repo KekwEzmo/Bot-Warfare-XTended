@@ -22,12 +22,13 @@ init()
 		return;
 	}
 	
-	// Bot Warfare XTended menu colors, tweak here
-	level.bw_menu_bg = ( 0.05, 0.06, 0.09 ); // bars and panels
-	level.bw_menu_bg_alpha = 0.85;
-	level.bw_menu_accent = ( 1, 0.5, 0.1 ); // highlight and trim
-	level.bw_menu_text = ( 0.75, 0.77, 0.82 ); // unselected text
-	level.bw_menu_text_sel = ( 1, 1, 1 ); // selected text
+	// menu colours come from the theme, see applyMenuTheme
+	if ( getdvar( "bots_menu_theme" ) == "" )
+	{
+		setdvar( "bots_menu_theme", "xtended" );
+	}
+	
+	applyMenuTheme( getdvar( "bots_menu_theme" ) );
 	
 	// names shown when a realism toggle is flipped
 	level.bw_real_labels = [];
@@ -52,8 +53,147 @@ init()
 	level.bw_real_labels[ "avenge" ] = "Bots avenge teammates";
 	level.bw_real_labels[ "parties" ] = "Bots play in parties";
 	level.bw_real_labels[ "churn" ] = "Bots come and go";
+	level.bw_real_labels[ "reactive" ] = "Bots react to the match";
+	level.bw_real_labels[ "recoil" ] = "Bots have recoil";
 	
 	thread watchPlayers();
+}
+
+/*
+	Sets the menu colours for a theme: xtended, classic, ocean, toxic, royal or mono.
+*/
+applyMenuTheme( name )
+{
+	// bars and panels, highlight and trim, unselected text, selected text
+	bg = ( 0.05, 0.06, 0.09 );
+	alpha = 0.85;
+	accent = ( 1, 0.5, 0.1 );
+	text = ( 0.75, 0.77, 0.82 );
+	sel = ( 1, 1, 1 );
+	
+	switch ( name )
+	{
+		case "classic":
+			bg = ( 0, 0, 0 );
+			alpha = 1;
+			accent = ( 0.8, 0, 0 );
+			text = ( 1, 1, 1 );
+			break;
+			
+		case "ocean":
+			bg = ( 0.03, 0.07, 0.12 );
+			accent = ( 0.15, 0.55, 0.95 );
+			text = ( 0.72, 0.8, 0.88 );
+			break;
+			
+		case "toxic":
+			bg = ( 0.04, 0.07, 0.04 );
+			accent = ( 0.3, 0.75, 0.15 );
+			text = ( 0.75, 0.85, 0.75 );
+			break;
+			
+		case "royal":
+			bg = ( 0.07, 0.04, 0.12 );
+			accent = ( 0.6, 0.3, 0.95 );
+			text = ( 0.8, 0.75, 0.88 );
+			break;
+			
+		case "mono":
+			bg = ( 0.07, 0.07, 0.07 );
+			alpha = 0.9;
+			accent = ( 0.85, 0.85, 0.85 );
+			text = ( 0.65, 0.65, 0.65 );
+			sel = ( 0.05, 0.05, 0.05 );
+			break;
+			
+		default:
+			name = "xtended";
+			break;
+	}
+	
+	level.bw_menu_theme = name;
+	level.bw_menu_bg = bg;
+	level.bw_menu_bg_alpha = alpha;
+	level.bw_menu_accent = accent;
+	level.bw_menu_text = text;
+	level.bw_menu_text_sel = sel;
+}
+
+/*
+	The theme's name as shown in the menu.
+*/
+getMenuThemeLabel( name )
+{
+	switch ( name )
+	{
+		case "classic":
+			return "Classic";
+			
+		case "ocean":
+			return "Ocean";
+			
+		case "toxic":
+			return "Toxic";
+			
+		case "royal":
+			return "Royal";
+			
+		case "mono":
+			return "Mono";
+	}
+	
+	return "XTended";
+}
+
+/*
+	Switches to the next menu theme and recolours the open menu right away.
+*/
+bot_menu_theme( a, b )
+{
+	themes = strtok( "xtended,classic,ocean,toxic,royal,mono", "," );
+	next = themes[ 0 ];
+	
+	for ( i = 0; i < themes.size; i++ )
+	{
+		if ( themes[ i ] == level.bw_menu_theme )
+		{
+			next = themes[ ( i + 1 ) % themes.size ];
+			break;
+		}
+	}
+	
+	setdvar( "bots_menu_theme", next );
+	applyMenuTheme( next );
+	
+	if ( isdefined( self.menu ) && isdefined( self.menu[ "X" ] ) )
+	{
+		if ( isdefined( self.menu[ "X" ][ "Shader" ] ) )
+		{
+			self.menu[ "X" ][ "Shader" ].color = level.bw_menu_bg;
+			self.menu[ "X" ][ "Shader" ].alpha = level.bw_menu_bg_alpha;
+		}
+		
+		if ( isdefined( self.menu[ "X" ][ "Trim" ] ) )
+		{
+			self.menu[ "X" ][ "Trim" ].color = level.bw_menu_accent;
+		}
+		
+		if ( isdefined( self.menu[ "X" ][ "Scroller" ] ) )
+		{
+			self.menu[ "X" ][ "Scroller" ].color = level.bw_menu_accent;
+		}
+	}
+	
+	if ( isdefined( self.menuversionhud ) )
+	{
+		self.menuversionhud.color = level.bw_menu_text;
+	}
+	
+	// redraw the page so its panel and cursor bar pick up the new colours
+	if ( self.menuopen && self.submenu != "Main" )
+	{
+		self OpenSub( self.submenu );
+	}
 }
 
 /*
@@ -209,6 +349,7 @@ init_menu()
 	
 	self thread watchPlayerOpenMenu();
 	self thread MenuSelect();
+	self thread MenuBack();
 	self thread RightMenu();
 	self thread LeftMenu();
 	self thread UpMenu();
@@ -278,6 +419,8 @@ doGreetings()
 	self iprintln( "Welcome to ^3Bot Warfare XTended^7, " + self.name + "!" );
 	wait 5;
 	self iprintln( "Press ^3[{+actionslot 1}]^7 to open the menu" );
+	wait 4;
+	self iprintln( "In the menu: scroll to move, click to select, right click to go back" );
 }
 
 watchPlayerOpenMenu()
@@ -321,12 +464,35 @@ watchPlayerOpenMenu()
 	}
 }
 
+/*
+	Right click (aim) goes back a page, or closes the menu from the top bar. Only while the menu is open.
+*/
+MenuBack()
+{
+	self endon ( "disconnect" );
+	self endon ( "bots_kill_menu" );
+	
+	self notifyonplayercommand( "bots_back", "+speed_throw" );
+	self notifyonplayercommand( "bots_back", "+toggleads_throw" );
+	
+	for ( ;; )
+	{
+		self waittill( "bots_back" );
+		
+		if ( self.menuopen )
+		{
+			self notify( "bots_open_menu" );
+		}
+	}
+}
+
 MenuSelect()
 {
 	self endon ( "disconnect" );
 	self endon ( "bots_kill_menu" );
 	
 	self notifyonplayercommand( "bots_select", "+gostand" );
+	self notifyonplayercommand( "bots_select", "+attack" );
 	
 	for ( ;; )
 	{
@@ -354,6 +520,7 @@ LeftMenu()
 	self endon ( "bots_kill_menu" );
 	
 	self notifyonplayercommand( "bots_left", "+moveleft" );
+	self notifyonplayercommand( "bots_left", "weapprev" );
 	
 	for ( ;; )
 	{
@@ -380,6 +547,7 @@ RightMenu()
 	self endon ( "bots_kill_menu" );
 	
 	self notifyonplayercommand( "bots_right", "+moveright" );
+	self notifyonplayercommand( "bots_right", "weapnext" );
 	
 	for ( ;; )
 	{
@@ -406,6 +574,7 @@ UpMenu()
 	self endon ( "bots_kill_menu" );
 	
 	self notifyonplayercommand( "bots_up", "+forward" );
+	self notifyonplayercommand( "bots_up", "weapprev" );
 	
 	for ( ;; )
 	{
@@ -432,6 +601,7 @@ DownMenu()
 	self endon ( "bots_kill_menu" );
 	
 	self notifyonplayercommand( "bots_down", "+back" );
+	self notifyonplayercommand( "bots_down", "weapnext" );
 	
 	for ( ;; )
 	{
@@ -454,10 +624,16 @@ DownMenu()
 
 OpenSub( menu, menu2 )
 {
-	if ( menu != "Main" && ( !isdefined( self.menu[ menu ] ) || !!isdefined( self.menu[ menu ][ "FirstOpen" ] ) ) )
+	if ( menu != "Main" && ( !isdefined( self.menu[ menu ] ) || !isdefined( self.menu[ menu ][ "FirstOpen" ] ) ) )
 	{
 		self.curs[ menu ][ "Y" ] = 0;
 		self.menu[ menu ][ "FirstOpen" ] = true;
+	}
+	
+	// pages can shrink (the bot status page), keep the cursor on an entry
+	if ( menu != "Main" && isdefined( self.curs[ menu ][ "Y" ] ) && isdefined( self.option[ "Name" ][ menu ] ) && self.curs[ menu ][ "Y" ] >= self.option[ "Name" ][ menu ].size )
+	{
+		self.curs[ menu ][ "Y" ] = 0;
 	}
 	
 	logOldi = true;
@@ -534,7 +710,7 @@ OpenSub( menu, menu2 )
 		self.menutitlehud = self createfontstring( "objective", 1.2 );
 		self.menutitlehud setpoint( "RIGHT", "TOPRIGHT", -16, 15 );
 		self.menutitlehud settext( "BW ^3XTENDED" );
-		self.menutitlehud.color = level.bw_menu_text_sel;
+		self.menutitlehud.color = ( 1, 1, 1 );
 		self.menutitlehud.sort = 999;
 		
 		self CursMove( "X" );
@@ -774,7 +950,8 @@ ExitSub()
 	}
 	else
 	{
-		self CursMove( "Y" );
+		// nested pages: draw the parent page again
+		self OpenSub( self.submenu );
 	}
 }
 
@@ -866,16 +1043,22 @@ addOptions()
 {
 	self AddMenu( "Main", 0, "Bots", ::OpenSub, "man_bots", "" );
 	self AddBack( "man_bots", "Main" );
+	self AddMenu( "man_bots", 0, "Add bots  >", ::OpenSub, "man_add", "" );
+	self AddMenu( "man_bots", 1, "Kick bots  >", ::OpenSub, "man_kick", "" );
+	self AddMenu( "man_bots", 2, "Bot filling  >", ::OpenSub, "man_fill", "" );
+	self AddBack( "man_add", "man_bots" );
+	self AddBack( "man_kick", "man_bots" );
+	self AddBack( "man_fill", "man_bots" );
 	
 	_temp = "";
 	_tempDvar = getdvarint( "bots_manage_add" );
-	self AddMenu( "man_bots", 0, "Add 1 bot", ::man_bots, "add", 1 + _tempDvar );
-	self AddMenu( "man_bots", 1, "Add 3 bot", ::man_bots, "add", 3 + _tempDvar );
-	self AddMenu( "man_bots", 2, "Add 7 bot", ::man_bots, "add", 7 + _tempDvar );
-	self AddMenu( "man_bots", 3, "Add 11 bot", ::man_bots, "add", 11 + _tempDvar );
-	self AddMenu( "man_bots", 4, "Add 17 bot", ::man_bots, "add", 17 + _tempDvar );
-	self AddMenu( "man_bots", 5, "Kick a bot", ::man_bots, "kick", 1 );
-	self AddMenu( "man_bots", 6, "Kick all bots", ::man_bots, "kick", getBotArray().size );
+	self AddMenu( "man_add", 0, "Add 1 bot", ::man_bots, "add", 1 + _tempDvar );
+	self AddMenu( "man_add", 1, "Add 3 bots", ::man_bots, "add", 3 + _tempDvar );
+	self AddMenu( "man_add", 2, "Add 7 bots", ::man_bots, "add", 7 + _tempDvar );
+	self AddMenu( "man_add", 3, "Add 11 bots", ::man_bots, "add", 11 + _tempDvar );
+	self AddMenu( "man_add", 4, "Add 17 bots", ::man_bots, "add", 17 + _tempDvar );
+	self AddMenu( "man_kick", 0, "Kick a bot", ::man_bots, "kick", 1 );
+	self AddMenu( "man_kick", 1, "Kick all bots", ::man_bots, "kick", getBotArray().size );
 	
 	_tempDvar = getdvarint( "bots_manage_fill_kick" );
 	
@@ -888,7 +1071,7 @@ addOptions()
 		_temp = onOff( false );
 	}
 	
-	self AddMenu( "man_bots", 7, "Toggle auto bot kicking: " + _temp, ::man_bots, "autokick", _tempDvar );
+	self AddMenu( "man_kick", 2, "Auto kick extra bots: " + _temp, ::man_bots, "autokick", _tempDvar );
 	
 	_tempDvar = getdvarint( "bots_manage_fill_mode" );
 	
@@ -923,11 +1106,11 @@ addOptions()
 			break;
 	}
 	
-	self AddMenu( "man_bots", 8, "Change bot_fill_mode: " + _temp, ::man_bots, "fillmode", _tempDvar );
+	self AddMenu( "man_fill", 0, "Fill mode: " + _temp, ::man_bots, "fillmode", _tempDvar );
 	
 	_tempDvar = getdvarint( "bots_manage_fill" );
-	self AddMenu( "man_bots", 9, "Increase bots to keep in-game: " + _tempDvar, ::man_bots, "fillup", _tempDvar );
-	self AddMenu( "man_bots", 10, "Decrease bots to keep in-game: " + _tempDvar, ::man_bots, "filldown", _tempDvar );
+	self AddMenu( "man_fill", 1, "Keep more bots: " + _tempDvar, ::man_bots, "fillup", _tempDvar );
+	self AddMenu( "man_fill", 2, "Keep fewer bots: " + _tempDvar, ::man_bots, "filldown", _tempDvar );
 	
 	_tempDvar = getdvarint( "bots_manage_fill_spec" );
 	
@@ -940,19 +1123,27 @@ addOptions()
 		_temp = onOff( false );
 	}
 	
-	self AddMenu( "man_bots", 11, "Count players for fill on spectator: " + _temp, ::man_bots, "fillspec", _tempDvar );
+	self AddMenu( "man_fill", 3, "Count spectators: " + _temp, ::man_bots, "fillspec", _tempDvar );
 	
 	//
 	
 	self AddMenu( "Main", 1, "Teams & Skill", ::OpenSub, "man_team", "" );
 	self AddBack( "man_team", "Main" );
+	self AddMenu( "man_team", 0, "Teams  >", ::OpenSub, "team_t", "" );
+	self AddMenu( "man_team", 1, "Difficulty  >", ::OpenSub, "team_d", "" );
+	self AddMenu( "team_d", 1, "Axis mix (custom difficulty)  >", ::OpenSub, "team_da", "" );
+	self AddMenu( "team_d", 2, "Allies mix (custom difficulty)  >", ::OpenSub, "team_dl", "" );
+	self AddBack( "team_t", "man_team" );
+	self AddBack( "team_d", "man_team" );
+	self AddBack( "team_da", "team_d" );
+	self AddBack( "team_dl", "team_d" );
 	
 	_tempDvar = getdvar( "bots_team" );
-	self AddMenu( "man_team", 0, "Change bot team: " + _tempDvar, ::bot_teams, "team", _tempDvar );
+	self AddMenu( "team_t", 0, "Bot team: " + _tempDvar, ::bot_teams, "team", _tempDvar );
 	
 	_tempDvar = getdvarint( "bots_team_amount" );
-	self AddMenu( "man_team", 1, "Increase bots to be on axis team: " + _tempDvar, ::bot_teams, "teamup", _tempDvar );
-	self AddMenu( "man_team", 2, "Decrease bots to be on axis team: " + _tempDvar, ::bot_teams, "teamdown", _tempDvar );
+	self AddMenu( "team_t", 1, "More bots on axis: " + _tempDvar, ::bot_teams, "teamup", _tempDvar );
+	self AddMenu( "team_t", 2, "Fewer bots on axis: " + _tempDvar, ::bot_teams, "teamdown", _tempDvar );
 	
 	_tempDvar = getdvarint( "bots_team_force" );
 	
@@ -965,7 +1156,7 @@ addOptions()
 		_temp = onOff( false );
 	}
 	
-	self AddMenu( "man_team", 3, "Toggle forcing bots on team: " + _temp, ::bot_teams, "teamforce", _tempDvar );
+	self AddMenu( "team_t", 3, "Force bot teams: " + _temp, ::bot_teams, "teamforce", _tempDvar );
 	
 	_tempDvar = getdvarint( "bots_team_mode" );
 	
@@ -978,7 +1169,7 @@ addOptions()
 		_temp = "everyone";
 	}
 	
-	self AddMenu( "man_team", 4, "Toggle bot_team_bot: " + _temp, ::bot_teams, "teammode", _tempDvar );
+	self AddMenu( "team_t", 4, "Balance counts only bots: " + _temp, ::bot_teams, "teammode", _tempDvar );
 	
 	_tempDvar = getdvarint( "bots_skill" );
 	
@@ -1029,28 +1220,35 @@ addOptions()
 			break;
 	}
 	
-	self AddMenu( "man_team", 5, "Change bot difficulty: " + _temp, ::bot_teams, "skill", _tempDvar );
+	self AddMenu( "team_d", 0, "Difficulty: " + _temp, ::bot_teams, "skill", _tempDvar );
 	
 	_tempDvar = getdvarint( "bots_skill_axis_hard" );
-	self AddMenu( "man_team", 6, "Increase amount of hard bots on axis team: " + _tempDvar, ::bot_teams, "axishardup", _tempDvar );
-	self AddMenu( "man_team", 7, "Decrease amount of hard bots on axis team: " + _tempDvar, ::bot_teams, "axisharddown", _tempDvar );
+	self AddMenu( "team_da", 0, "Hard bots on axis +1: " + _tempDvar, ::bot_teams, "axishardup", _tempDvar );
+	self AddMenu( "team_da", 1, "Hard bots on axis -1: " + _tempDvar, ::bot_teams, "axisharddown", _tempDvar );
 	
 	_tempDvar = getdvarint( "bots_skill_axis_med" );
-	self AddMenu( "man_team", 8, "Increase amount of med bots on axis team: " + _tempDvar, ::bot_teams, "axismedup", _tempDvar );
-	self AddMenu( "man_team", 9, "Decrease amount of med bots on axis team: " + _tempDvar, ::bot_teams, "axismeddown", _tempDvar );
+	self AddMenu( "team_da", 2, "Medium bots on axis +1: " + _tempDvar, ::bot_teams, "axismedup", _tempDvar );
+	self AddMenu( "team_da", 3, "Medium bots on axis -1: " + _tempDvar, ::bot_teams, "axismeddown", _tempDvar );
 	
 	_tempDvar = getdvarint( "bots_skill_allies_hard" );
-	self AddMenu( "man_team", 10, "Increase amount of hard bots on allies team: " + _tempDvar, ::bot_teams, "allieshardup", _tempDvar );
-	self AddMenu( "man_team", 11, "Decrease amount of hard bots on allies team: " + _tempDvar, ::bot_teams, "alliesharddown", _tempDvar );
+	self AddMenu( "team_dl", 0, "Hard bots on allies +1: " + _tempDvar, ::bot_teams, "allieshardup", _tempDvar );
+	self AddMenu( "team_dl", 1, "Hard bots on allies -1: " + _tempDvar, ::bot_teams, "alliesharddown", _tempDvar );
 	
 	_tempDvar = getdvarint( "bots_skill_allies_med" );
-	self AddMenu( "man_team", 12, "Increase amount of med bots on allies team: " + _tempDvar, ::bot_teams, "alliesmedup", _tempDvar );
-	self AddMenu( "man_team", 13, "Decrease amount of med bots on allies team: " + _tempDvar, ::bot_teams, "alliesmeddown", _tempDvar );
+	self AddMenu( "team_dl", 2, "Medium bots on allies +1: " + _tempDvar, ::bot_teams, "alliesmedup", _tempDvar );
+	self AddMenu( "team_dl", 3, "Medium bots on allies -1: " + _tempDvar, ::bot_teams, "alliesmeddown", _tempDvar );
 	
 	//
 	
 	self AddMenu( "Main", 2, "Settings", ::OpenSub, "set1", "" );
 	self AddBack( "set1", "Main" );
+	self AddMenu( "set1", 0, "Loadouts  >", ::OpenSub, "set_l", "" );
+	self AddMenu( "set1", 1, "Combat  >", ::OpenSub, "set_c", "" );
+	self AddMenu( "set1", 2, "Objectives & extras  >", ::OpenSub, "set_o", "" );
+	self AddMenu( "set1", 3, "Menu theme: " + getMenuThemeLabel( level.bw_menu_theme ), ::bot_menu_theme, "", "" );
+	self AddBack( "set_l", "set1" );
+	self AddBack( "set_c", "set1" );
+	self AddBack( "set_o", "set1" );
 	
 	_tempDvar = getdvarint( "bots_loadout_reasonable" );
 	
@@ -1063,7 +1261,7 @@ addOptions()
 		_temp = onOff( false );
 	}
 	
-	self AddMenu( "set1", 0, "Bots use only good class setups: " + _temp, ::bot_func, "reasonable", _tempDvar );
+	self AddMenu( "set_l", 0, "Only good classes: " + _temp, ::bot_func, "reasonable", _tempDvar );
 	
 	_tempDvar = getdvarint( "bots_loadout_allow_op" );
 	
@@ -1076,7 +1274,7 @@ addOptions()
 		_temp = onOff( false );
 	}
 	
-	self AddMenu( "set1", 1, "Bots can use op and annoying class setups: " + _temp, ::bot_func, "op", _tempDvar );
+	self AddMenu( "set_l", 1, "Allow OP classes: " + _temp, ::bot_func, "op", _tempDvar );
 	
 	_tempDvar = getdvarint( "bots_play_move" );
 	
@@ -1089,7 +1287,7 @@ addOptions()
 		_temp = onOff( false );
 	}
 	
-	self AddMenu( "set1", 2, "Bots can move: " + _temp, ::bot_func, "move", _tempDvar );
+	self AddMenu( "set_c", 0, "Bots can move: " + _temp, ::bot_func, "move", _tempDvar );
 	
 	_tempDvar = getdvarint( "bots_play_knife" );
 	
@@ -1102,7 +1300,7 @@ addOptions()
 		_temp = onOff( false );
 	}
 	
-	self AddMenu( "set1", 3, "Bots can knife: " + _temp, ::bot_func, "knife", _tempDvar );
+	self AddMenu( "set_c", 1, "Bots can knife: " + _temp, ::bot_func, "knife", _tempDvar );
 	
 	_tempDvar = getdvarint( "bots_play_fire" );
 	
@@ -1115,7 +1313,7 @@ addOptions()
 		_temp = onOff( false );
 	}
 	
-	self AddMenu( "set1", 4, "Bots can fire: " + _temp, ::bot_func, "fire", _tempDvar );
+	self AddMenu( "set_c", 2, "Bots can fire: " + _temp, ::bot_func, "fire", _tempDvar );
 	
 	_tempDvar = getdvarint( "bots_play_nade" );
 	
@@ -1128,7 +1326,7 @@ addOptions()
 		_temp = onOff( false );
 	}
 	
-	self AddMenu( "set1", 5, "Bots can nade: " + _temp, ::bot_func, "nade", _tempDvar );
+	self AddMenu( "set_c", 3, "Bots can nade: " + _temp, ::bot_func, "nade", _tempDvar );
 	
 	_tempDvar = getdvarint( "bots_play_take_carepackages" );
 	
@@ -1141,7 +1339,7 @@ addOptions()
 		_temp = onOff( false );
 	}
 	
-	self AddMenu( "set1", 6, "Bots can take carepackages: " + _temp, ::bot_func, "care", _tempDvar );
+	self AddMenu( "set_o", 2, "Bots can take carepackages: " + _temp, ::bot_func, "care", _tempDvar );
 	
 	_tempDvar = getdvarint( "bots_play_obj" );
 	
@@ -1154,7 +1352,7 @@ addOptions()
 		_temp = onOff( false );
 	}
 	
-	self AddMenu( "set1", 7, "Bots play the objective: " + _temp, ::bot_func, "obj", _tempDvar );
+	self AddMenu( "set_o", 0, "Bots play the objective: " + _temp, ::bot_func, "obj", _tempDvar );
 	
 	_tempDvar = getdvarint( "bots_play_camp" );
 	
@@ -1167,7 +1365,7 @@ addOptions()
 		_temp = onOff( false );
 	}
 	
-	self AddMenu( "set1", 8, "Bots can camp: " + _temp, ::bot_func, "camp", _tempDvar );
+	self AddMenu( "set_o", 1, "Bots can camp: " + _temp, ::bot_func, "camp", _tempDvar );
 	
 	_tempDvar = getdvarint( "bots_play_jumpdrop" );
 	
@@ -1180,7 +1378,7 @@ addOptions()
 		_temp = onOff( false );
 	}
 	
-	self AddMenu( "set1", 9, "Bots can jump and dropshot: " + _temp, ::bot_func, "jump", _tempDvar );
+	self AddMenu( "set_c", 5, "Bots can jump and dropshot: " + _temp, ::bot_func, "jump", _tempDvar );
 	
 	_tempDvar = getdvarint( "bots_play_target_other" );
 	
@@ -1193,7 +1391,7 @@ addOptions()
 		_temp = onOff( false );
 	}
 	
-	self AddMenu( "set1", 10, "Bots can target other script objects: " + _temp, ::bot_func, "targetother", _tempDvar );
+	self AddMenu( "set_o", 3, "Bots target other objects: " + _temp, ::bot_func, "targetother", _tempDvar );
 	
 	_tempDvar = getdvarint( "bots_play_killstreak" );
 	
@@ -1206,7 +1404,7 @@ addOptions()
 		_temp = onOff( false );
 	}
 	
-	self AddMenu( "set1", 11, "Bots can use killstreaks: " + _temp, ::bot_func, "killstreak", _tempDvar );
+	self AddMenu( "set_o", 4, "Bots can use killstreaks: " + _temp, ::bot_func, "killstreak", _tempDvar );
 	
 	_tempDvar = getdvarint( "bots_play_ads" );
 	
@@ -1219,12 +1417,48 @@ addOptions()
 		_temp = onOff( false );
 	}
 	
-	self AddMenu( "set1", 12, "Bots can ads: " + _temp, ::bot_func, "ads", _tempDvar );
+	self AddMenu( "set_c", 4, "Bots can ads: " + _temp, ::bot_func, "ads", _tempDvar );
+	
+	_tempDvar = getdvarint( "bots_play_crouchonly" );
+	
+	if ( _tempDvar )
+	{
+		_temp = onOff( true );
+	}
+	else
+	{
+		_temp = onOff( false );
+	}
+	
+	self AddMenu( "set_c", 6, "Bots crouch only: " + _temp, ::bot_func, "crouchonly", _tempDvar );
+	
+	_tempDvar = getdvarint( "bots_play_thirdperson_aim" );
+	
+	if ( _tempDvar )
+	{
+		_temp = onOff( true );
+	}
+	else
+	{
+		_temp = onOff( false );
+	}
+	
+	self AddMenu( "set_c", 7, "Third person aim from camera: " + _temp, ::bot_func, "tpaim", _tempDvar );
 
 	self AddMenu( "Main", 3, "Realism", ::OpenSub, "real1", "" );
 	self AddMenu( "Main", 4, "Social", ::OpenSub, "real2", "" );
 	self AddBack( "real1", "Main" );
 	self AddBack( "real2", "Main" );
+	self AddMenu( "real1", 1, "Behaviour  >", ::OpenSub, "real_b", "" );
+	self AddMenu( "real1", 2, "Tactics  >", ::OpenSub, "real_t", "" );
+	self AddMenu( "real1", 3, "Bot status  >", ::OpenSub, "status", "" );
+	self AddMenu( "real2", 0, "Chat  >", ::OpenSub, "real_c", "" );
+	self AddMenu( "real2", 1, "Players  >", ::OpenSub, "real_p", "" );
+	self AddBack( "real_b", "real1" );
+	self AddBack( "real_t", "real1" );
+	self AddBack( "status", "real1" );
+	self AddBack( "real_c", "real2" );
+	self AddBack( "real_p", "real2" );
 	
 	_temp = getdvar( "bots_real_preset" );
 	self AddMenu( "real1", 0, "Preset: " + _temp, ::bot_real_preset, _temp, "" );
@@ -1240,7 +1474,7 @@ addOptions()
 		_temp = onOff( false );
 	}
 	
-	self AddMenu( "real1", 1, "Bots have personalities: " + _temp, ::bot_real_func, "traits", _tempDvar );
+	self AddMenu( "real_b", 0, "Bots have personalities: " + _temp, ::bot_real_func, "traits", _tempDvar );
 	
 	_tempDvar = getdvarint( "bots_real_aim" );
 	
@@ -1253,7 +1487,7 @@ addOptions()
 		_temp = onOff( false );
 	}
 	
-	self AddMenu( "real1", 2, "Bots aim like humans: " + _temp, ::bot_real_func, "aim", _tempDvar );
+	self AddMenu( "real_b", 1, "Bots aim like humans: " + _temp, ::bot_real_func, "aim", _tempDvar );
 	
 	_tempDvar = getdvarint( "bots_real_hearing" );
 	
@@ -1266,7 +1500,7 @@ addOptions()
 		_temp = onOff( false );
 	}
 	
-	self AddMenu( "real1", 3, "Bots react to sounds: " + _temp, ::bot_real_func, "hearing", _tempDvar );
+	self AddMenu( "real_b", 2, "Bots react to sounds: " + _temp, ::bot_real_func, "hearing", _tempDvar );
 	
 	_tempDvar = getdvarint( "bots_real_retreat" );
 	
@@ -1279,7 +1513,7 @@ addOptions()
 		_temp = onOff( false );
 	}
 	
-	self AddMenu( "real1", 4, "Bots retreat when hurt: " + _temp, ::bot_real_func, "retreat", _tempDvar );
+	self AddMenu( "real_b", 3, "Bots retreat when hurt: " + _temp, ::bot_real_func, "retreat", _tempDvar );
 	
 	_tempDvar = getdvarint( "bots_real_counter" );
 	
@@ -1292,7 +1526,7 @@ addOptions()
 		_temp = onOff( false );
 	}
 	
-	self AddMenu( "real1", 5, "Bots counter-pick classes: " + _temp, ::bot_real_func, "counter", _tempDvar );
+	self AddMenu( "real_t", 0, "Bots counter-pick classes: " + _temp, ::bot_real_func, "counter", _tempDvar );
 	
 	_tempDvar = getdvarint( "bots_real_mood" );
 	
@@ -1305,7 +1539,7 @@ addOptions()
 		_temp = onOff( false );
 	}
 	
-	self AddMenu( "real1", 6, "Bots get cocky or tilted: " + _temp, ::bot_real_func, "mood", _tempDvar );
+	self AddMenu( "real_b", 4, "Bots get cocky or tilted: " + _temp, ::bot_real_func, "mood", _tempDvar );
 	
 	_tempDvar = getdvarint( "bots_real_airhide" );
 	
@@ -1318,7 +1552,7 @@ addOptions()
 		_temp = onOff( false );
 	}
 	
-	self AddMenu( "real1", 7, "Bots hide from air support: " + _temp, ::bot_real_func, "airhide", _tempDvar );
+	self AddMenu( "real_t", 1, "Bots hide from air support: " + _temp, ::bot_real_func, "airhide", _tempDvar );
 	
 	_tempDvar = getdvarint( "bots_real_hotspots" );
 	
@@ -1331,7 +1565,7 @@ addOptions()
 		_temp = onOff( false );
 	}
 	
-	self AddMenu( "real1", 8, "Bots learn camping spots: " + _temp, ::bot_real_func, "hotspots", _tempDvar );
+	self AddMenu( "real_t", 2, "Bots learn camping spots: " + _temp, ::bot_real_func, "hotspots", _tempDvar );
 	
 	_tempDvar = getdvarint( "bots_real_teamintel" );
 	
@@ -1344,7 +1578,7 @@ addOptions()
 		_temp = onOff( false );
 	}
 	
-	self AddMenu( "real1", 9, "Bots share enemy sightings: " + _temp, ::bot_real_func, "teamintel", _tempDvar );
+	self AddMenu( "real_t", 3, "Bots share enemy sightings: " + _temp, ::bot_real_func, "teamintel", _tempDvar );
 	
 	_tempDvar = getdvarint( "bots_real_matchaware" );
 	
@@ -1357,7 +1591,7 @@ addOptions()
 		_temp = onOff( false );
 	}
 	
-	self AddMenu( "real1", 10, "Bots react to the score: " + _temp, ::bot_real_func, "matchaware", _tempDvar );
+	self AddMenu( "real_t", 4, "Bots react to the score: " + _temp, ::bot_real_func, "matchaware", _tempDvar );
 	
 	_tempDvar = getdvarint( "bots_real_slipups" );
 	
@@ -1370,7 +1604,7 @@ addOptions()
 		_temp = onOff( false );
 	}
 	
-	self AddMenu( "real1", 11, "Bots make human mistakes: " + _temp, ::bot_real_func, "slipups", _tempDvar );
+	self AddMenu( "real_b", 5, "Bots make human mistakes: " + _temp, ::bot_real_func, "slipups", _tempDvar );
 	
 	_tempDvar = getdvarint( "bots_real_preaim" );
 	
@@ -1383,7 +1617,20 @@ addOptions()
 		_temp = onOff( false );
 	}
 	
-	self AddMenu( "real1", 12, "Bots check corners: " + _temp, ::bot_real_func, "preaim", _tempDvar );
+	self AddMenu( "real_b", 6, "Bots check corners: " + _temp, ::bot_real_func, "preaim", _tempDvar );
+	
+	_tempDvar = getdvarint( "bots_real_recoil" );
+	
+	if ( _tempDvar )
+	{
+		_temp = onOff( true );
+	}
+	else
+	{
+		_temp = onOff( false );
+	}
+	
+	self AddMenu( "real_b", 7, "Bots have recoil: " + _temp, ::bot_real_func, "recoil", _tempDvar );
 	
 	_tempDvar = getdvarint( "bots_real_turrets" );
 	
@@ -1396,7 +1643,7 @@ addOptions()
 		_temp = onOff( false );
 	}
 	
-	self AddMenu( "real1", 13, "Bots use mounted turrets: " + _temp, ::bot_real_func, "turrets", _tempDvar );
+	self AddMenu( "real_t", 5, "Bots use mounted turrets: " + _temp, ::bot_real_func, "turrets", _tempDvar );
 	
 	_tempDvar = getdvarint( "bots_real_adaptive" );
 	
@@ -1409,9 +1656,8 @@ addOptions()
 		_temp = onOff( false );
 	}
 	
-	self AddMenu( "real1", 14, "Bots adapt to your skill: " + _temp, ::bot_real_func, "adaptive", _tempDvar );
+	self AddMenu( "real_t", 6, "Bots adapt to your skill: " + _temp, ::bot_real_func, "adaptive", _tempDvar );
 	
-	self AddMenu( "real1", 15, "Show bot status", maps\mp\bots\_bot_realism::printBotStatus, "", "" );
 	
 	_tempDvar = getdvarint( "bots_real_chat" );
 	
@@ -1424,7 +1670,7 @@ addOptions()
 		_temp = onOff( false );
 	}
 	
-	self AddMenu( "real2", 0, "Bots type like people: " + _temp, ::bot_real_func, "chat", _tempDvar );
+	self AddMenu( "real_c", 0, "Bots type like people: " + _temp, ::bot_real_func, "chat", _tempDvar );
 	
 	_tempDvar = getdvarint( "bots_real_banter" );
 	
@@ -1437,7 +1683,7 @@ addOptions()
 		_temp = onOff( false );
 	}
 	
-	self AddMenu( "real2", 1, "Bots talk to each other: " + _temp, ::bot_real_func, "banter", _tempDvar );
+	self AddMenu( "real_c", 1, "Bots talk to each other: " + _temp, ::bot_real_func, "banter", _tempDvar );
 	
 	_tempDvar = getdvarint( "bots_real_voice" );
 	
@@ -1450,7 +1696,7 @@ addOptions()
 		_temp = onOff( false );
 	}
 	
-	self AddMenu( "real2", 2, "Bots use voice callouts: " + _temp, ::bot_real_func, "voice", _tempDvar );
+	self AddMenu( "real_c", 3, "Bots use voice callouts: " + _temp, ::bot_real_func, "voice", _tempDvar );
 	
 	_tempDvar = getdvarint( "bots_real_grudge" );
 	
@@ -1463,7 +1709,7 @@ addOptions()
 		_temp = onOff( false );
 	}
 	
-	self AddMenu( "real2", 3, "Bots hold grudges: " + _temp, ::bot_real_func, "grudge", _tempDvar );
+	self AddMenu( "real_p", 0, "Bots hold grudges: " + _temp, ::bot_real_func, "grudge", _tempDvar );
 	
 	_tempDvar = getdvarint( "bots_real_avenge" );
 	
@@ -1476,7 +1722,7 @@ addOptions()
 		_temp = onOff( false );
 	}
 	
-	self AddMenu( "real2", 4, "Bots avenge teammates: " + _temp, ::bot_real_func, "avenge", _tempDvar );
+	self AddMenu( "real_p", 1, "Bots avenge teammates: " + _temp, ::bot_real_func, "avenge", _tempDvar );
 	
 	_tempDvar = getdvarint( "bots_real_parties" );
 	
@@ -1489,7 +1735,7 @@ addOptions()
 		_temp = onOff( false );
 	}
 	
-	self AddMenu( "real2", 5, "Bots play in parties: " + _temp, ::bot_real_func, "parties", _tempDvar );
+	self AddMenu( "real_p", 2, "Bots play in parties: " + _temp, ::bot_real_func, "parties", _tempDvar );
 	
 	_tempDvar = getdvarint( "bots_real_churn" );
 	
@@ -1502,7 +1748,22 @@ addOptions()
 		_temp = onOff( false );
 	}
 	
-	self AddMenu( "real2", 6, "Bots come and go: " + _temp, ::bot_real_func, "churn", _tempDvar );
+	self AddMenu( "real_p", 3, "Bots come and go: " + _temp, ::bot_real_func, "churn", _tempDvar );
+	
+	_tempDvar = getdvarint( "bots_real_reactive" );
+	
+	if ( _tempDvar )
+	{
+		_temp = onOff( true );
+	}
+	else
+	{
+		_temp = onOff( false );
+	}
+	
+	self AddMenu( "real_c", 2, "Bots react to the match: " + _temp, ::bot_real_func, "reactive", _tempDvar );
+	
+	self addStatusOptions();
 }
 
 bot_real_func( a, b )
@@ -1615,6 +1876,16 @@ bot_func( a, b )
 		case "ads":
 			setdvar( "bots_play_ads", !b );
 			self iprintln( "Bots ads: " + onOff( !b ) );
+			break;
+			
+		case "crouchonly":
+			setdvar( "bots_play_crouchonly", !b );
+			self iprintln( "Bots crouch only: " + onOff( !b ) );
+			break;
+			
+		case "tpaim":
+			setdvar( "bots_play_thirdperson_aim", !b );
+			self iprintln( "Third person aim from camera: " + onOff( !b ) );
 			break;
 	}
 }
@@ -1864,4 +2135,66 @@ man_bots( a, b )
 			self iprintln( "Count players on spectator for bots_fill: " + onOff( !b ) );
 			break;
 	}
+}
+
+/*
+	The bot status page: bot names, five per page. Picking one shows its status, the last entry prints everyone to the console.
+*/
+addStatusOptions()
+{
+	self.option[ "Name" ][ "status" ] = [];
+	self.option[ "Function" ][ "status" ] = [];
+	self.option[ "Arg1" ][ "status" ] = [];
+	self.option[ "Arg2" ][ "status" ] = [];
+	
+	bots = getBotArray();
+	perPage = 5;
+	pages = int( ( bots.size + perPage - 1 ) / perPage );
+	
+	if ( !isdefined( self.bw_status_page ) || self.bw_status_page >= pages )
+	{
+		self.bw_status_page = 0;
+	}
+	
+	idx = 0;
+	
+	for ( i = self.bw_status_page * perPage; i < bots.size && i < ( self.bw_status_page + 1 ) * perPage; i++ )
+	{
+		self AddMenu( "status", idx, bots[ i ].name, ::bot_status_pick, bots[ i ], "" );
+		idx++;
+	}
+	
+	if ( pages > 1 )
+	{
+		self AddMenu( "status", idx, "Next page (" + ( self.bw_status_page + 1 ) + "/" + pages + ")", ::bot_status_page, "", "" );
+		idx++;
+	}
+	
+	self AddMenu( "status", idx, "Print all to console", maps\mp\bots\_bot_realism::printBotStatusConsole, "", "" );
+}
+
+/*
+	Shows one bot's status in the kill feed.
+*/
+bot_status_pick( bot, b )
+{
+	if ( !isdefined( bot ) || !isplayer( bot ) )
+	{
+		self iprintln( "That bot has left." );
+		return;
+	}
+	
+	self iprintln( "^3" + bot.name );
+	self iprintln( bot maps\mp\bots\_bot_realism::getBotStatusLine() );
+}
+
+/*
+	Flips to the next page of bots and redraws it.
+*/
+bot_status_page( a, b )
+{
+	self.bw_status_page++;
+	self.curs[ "status" ][ "Y" ] = 0;
+	self addStatusOptions();
+	self OpenSub( "status" );
 }

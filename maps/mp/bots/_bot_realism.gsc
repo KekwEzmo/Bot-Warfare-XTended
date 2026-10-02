@@ -138,6 +138,21 @@ init()
 		setdvar( "bots_real_bait", 30 ); // percent chance a bot baits a human it kills
 	}
 	
+	if ( getdvar( "bots_real_recoil" ) == "" )
+	{
+		setdvar( "bots_real_recoil", true ); // bots' aim climbs while spraying, like recoil (#59)
+	}
+	
+	if ( getdvar( "bots_real_reactive" ) == "" )
+	{
+		setdvar( "bots_real_reactive", true ); // bots react in chat to the match: streaks, objectives, killstreaks, joins, and chat on their own
+	}
+	
+	if ( getdvar( "bots_real_flame" ) == "" )
+	{
+		setdvar( "bots_real_flame", 40 ); // percent chance a bot killing a bot starts a flame war
+	}
+	
 	if ( getdvar( "bots_real_mood_streak" ) == "" )
 	{
 		setdvar( "bots_real_mood_streak", 3 ); // kills or deaths in a row before a bot gets cocky or tilted
@@ -480,7 +495,7 @@ applyHumanAim( obj, ent, theTime )
 	offset -= lateral * 0.05 * ( 0.3 + sloppy );
 	
 	// swinging onto a new target overshoots past it, then settles back
-	if ( obj.trace_time <= 50 && ( !isdefined( obj.real_overshoot_time ) || theTime - obj.real_overshoot_time > 1000 ) )
+	if ( !isdefined( obj.real_overshoot_time ) || ( obj.trace_time <= 50 && theTime - obj.real_overshoot_time > 1000 ) )
 	{
 		eye = self geteye();
 		angles = self getplayerangles();
@@ -593,7 +608,7 @@ watchExplosionSound( owner )
 	while ( isdefined( self ) )
 	{
 		org = self.origin;
-		wait 0.05;
+		wait 0.25;
 	}
 	
 	addSoundEvent( org, owner, 2500, "explosion" );
@@ -980,6 +995,12 @@ bot_self_preservation_think()
 			continue;
 		}
 		
+		// the threshold never goes above 60%, so skip working it out while healthier than that
+		if ( self.health > self.maxhealth * 0.6 )
+		{
+			continue;
+		}
+		
 		threshold = self getRetreatHealthPercent();
 		
 		// easy bots are worse at knowing when to back off
@@ -1330,6 +1351,26 @@ getBotStatusLine()
 }
 
 /*
+	Prints every bot's status to the console only, for the menu's bot status page.
+*/
+printBotStatusConsole( a, b )
+{
+	bots = getBotArray();
+	
+	BotBuiltinPrintConsole( "---- Bot Warfare XTended status (" + bots.size + " bots) ----" );
+	
+	for ( i = 0; i < bots.size; i++ )
+	{
+		if ( isdefined( bots[ i ] ) )
+		{
+			BotBuiltinPrintConsole( bots[ i ].name + ": " + bots[ i ] getBotStatusLine() );
+		}
+	}
+	
+	self iprintln( "Printed " + bots.size + " bots to the console (~)" );
+}
+
+/*
 	Prints every bot's status to the killfeed and the console. Called from the menu on the player.
 */
 printBotStatus( a, b )
@@ -1386,10 +1427,22 @@ onAnyPlayerKilled( eAttacker, sWeapon, sMeansOfDeath, sHitLoc )
 		eAttacker onBotGotKill( self );
 	}
 	
+	// #114: bonus XP for killing bots
+	if ( attackerIsPlayer && !eAttacker is_bot() && self is_bot() && getdvarfloat( "bots_xp_multiplier" ) > 1 )
+	{
+		extra = int( maps\mp\gametypes\_rank::getscoreinfovalue( "kill" ) * ( getdvarfloat( "bots_xp_multiplier" ) - 1 ) );
+		
+		if ( extra > 0 )
+		{
+			eAttacker thread maps\mp\gametypes\_rank::giverankxp( "kill", extra );
+		}
+	}
+	
 	if ( attackerIsPlayer )
 	{
 		self alertAvengers( eAttacker );
 		self noteSpecialKill( eAttacker, sWeapon, sMeansOfDeath, sHitLoc );
+		level thread maps\mp\bots\_bot_chat::reactToKill( eAttacker, self, sWeapon, sMeansOfDeath );
 	}
 	
 	if ( !self is_bot() || !isdefined( self.pers[ "bots" ] ) )
@@ -2056,6 +2109,25 @@ noteGrudgeDeath( killer )
 }
 
 /*
+	Makes the other player this bot's nemesis right away (after a flame war).
+*/
+setGrudgeAgainst( other )
+{
+	if ( !getdvarint( "bots_real_grudge" ) || !isdefined( other ) || !isdefined( self.pers[ "bots" ] ) )
+	{
+		return;
+	}
+	
+	if ( !isdefined( self.pers[ "bots" ][ "real_grudge_pos" ] ) )
+	{
+		self.pers[ "bots" ][ "real_grudge_pos" ] = [];
+	}
+	
+	self.pers[ "bots" ][ "real_grudge" ] = other.name;
+	self.pers[ "bots" ][ "real_grudge_pos" ][ other.name ] = other.origin;
+}
+
+/*
 	Settles the grudge when the bot kills its nemesis.
 */
 checkGrudgeRevenge( victim )
@@ -2640,7 +2712,7 @@ takeCounterClass()
 */
 enemyAirIsUp()
 {
-	targets = maps\mp\_stinger::gettargetlist();
+	targets = getAirTargets();
 	
 	for ( i = 0; i < targets.size; i++ )
 	{
@@ -2670,6 +2742,20 @@ enemyAirIsUp()
 	}
 	
 	return false;
+}
+
+/*
+	The game's list of air targets, shared by every bot and refreshed at most twice a second.
+*/
+getAirTargets()
+{
+	if ( !isdefined( level.bots_real_air_list ) || timeSince( level.bots_real_air_time, 500 ) )
+	{
+		level.bots_real_air_list = maps\mp\_stinger::gettargetlist();
+		level.bots_real_air_time = gettime();
+	}
+	
+	return level.bots_real_air_list;
 }
 
 /*
@@ -3431,6 +3517,21 @@ countEnemiesAlive()
 */
 getMatchState()
 {
+	if ( isdefined( self.bot_real_match_state ) && !timeSince( self.bot_real_match_time, 1000 ) )
+	{
+		return self.bot_real_match_state;
+	}
+	
+	self.bot_real_match_state = self computeMatchState();
+	self.bot_real_match_time = gettime();
+	return self.bot_real_match_state;
+}
+
+/*
+	Works out the match state, see getMatchState.
+*/
+computeMatchState()
+{
 	if ( !getdvarint( "bots_real_matchaware" ) || !isdefined( self.team ) )
 	{
 		return "normal";
@@ -3661,6 +3762,63 @@ isPanicking( dist )
 	}
 	
 	return ( self.bot.rand < threshold );
+}
+
+/*
+	Recoil: while a bot sprays, its aim climbs and wanders sideways. Harder bots pull it down better.
+	Bots used to fire perfectly still bursts from any gun (#59).
+*/
+applyRecoil( obj, theTime )
+{
+	if ( !getdvarint( "bots_real_recoil" ) || !isdefined( self.bot.real_spray_start ) || theTime - self.bot.last_fire_time > 250 )
+	{
+		return;
+	}
+	
+	// degrees of climb per second of sustained fire
+	rate = 0;
+	
+	switch ( getweaponclass( self getcurrentweapon() ) )
+	{
+		case "weapon_lmg":
+			rate = 6;
+			break;
+			
+		case "weapon_smg":
+		case "weapon_machine_pistol":
+			rate = 5;
+			break;
+			
+		case "weapon_assault":
+			rate = 4.5;
+			break;
+			
+		case "weapon_pistol":
+			rate = 3;
+			break;
+	}
+	
+	if ( rate <= 0 )
+	{
+		return;
+	}
+	
+	spray = ( theTime - self.bot.real_spray_start ) / 1000;
+	deg = rate * spray * ( 0.25 + 0.75 * self getSloppiness() );
+	
+	if ( deg > 6 )
+	{
+		deg = 6;
+	}
+	
+	if ( !isdefined( obj.real_recoil_time ) || timeSince( obj.real_recoil_time, 300 ) )
+	{
+		obj.real_recoil_time = theTime;
+		obj.real_recoil_side = randomfloatrange( -0.4, 0.4 );
+	}
+	
+	units = sqrt( obj.dist ) * deg * 0.01745;
+	obj.aim_offset += ( 0, 0, units ) + anglestoright( self getplayerangles() ) * units * obj.real_recoil_side;
 }
 
 /*
@@ -4170,8 +4328,11 @@ findPreaimSpot()
 	
 	candidates = [];
 	
-	for ( i = level.waypoints.size - 1; i >= 0; i-- )
+	// a random sample is plenty for a glance and much cheaper than scanning every waypoint
+	for ( n = 0; n < 40; n++ )
 	{
+		i = randomint( level.waypoints.size );
+		
 		if ( i == self.bot.next_wp || i == self.bot.second_next_wp )
 		{
 			continue;
@@ -4443,7 +4604,7 @@ bot_turret_seek_think()
 */
 setAllRealism( value )
 {
-	names = strtok( "traits,aim,hearing,retreat,counter,mood,airhide,grudge,hotspots,teamintel,matchaware,slipups,chat,voice,avenge,banter,parties,churn,preaim,turrets", "," );
+	names = strtok( "traits,aim,hearing,retreat,counter,mood,airhide,grudge,hotspots,teamintel,matchaware,slipups,chat,voice,avenge,banter,parties,churn,preaim,turrets,reactive,recoil", "," );
 	
 	for ( i = 0; i < names.size; i++ )
 	{
@@ -4470,6 +4631,7 @@ applyPreset( name )
 			setdvar( "bots_main_chat", 1.5 );
 			setdvar( "bots_real_rage", 50 );
 			setdvar( "bots_real_bait", 30 );
+			setdvar( "bots_real_flame", 40 );
 			setdvar( "bots_real_mood_streak", 3 );
 			break;
 			
@@ -4483,6 +4645,7 @@ applyPreset( name )
 			setdvar( "bots_main_chat", 0.5 );
 			setdvar( "bots_real_rage", 30 );
 			setdvar( "bots_real_bait", 15 );
+			setdvar( "bots_real_flame", 0 );
 			setdvar( "bots_real_mood_streak", 3 );
 			break;
 			
@@ -4492,6 +4655,7 @@ applyPreset( name )
 			setdvar( "bots_main_chat", 3 );
 			setdvar( "bots_real_rage", 85 );
 			setdvar( "bots_real_bait", 60 );
+			setdvar( "bots_real_flame", 90 );
 			setdvar( "bots_real_mood_streak", 2 );
 			break;
 			

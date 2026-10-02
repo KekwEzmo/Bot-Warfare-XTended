@@ -22,6 +22,9 @@ init()
 	
 	level thread onBotConnected();
 	level thread banterListener();
+	level thread reactWatchMatch();
+	level thread ambientChat();
+	level thread botDialogueThink();
 }
 
 /*
@@ -51,7 +54,7 @@ BotDoChat( chance, string, isTeam, kind, target )
 		return;
 	}
 	
-	if ( !( chance >= 100 || mod >= 100.0 || ( randomint( 100 ) < ( chance * mod ) + 0 ) ) )
+	if ( !( chance >= 100 || mod >= 100.0 || ( randomint( 100 ) < ( chance * mod * self getChattiness() ) ) ) )
 	{
 		return;
 	}
@@ -63,7 +66,7 @@ BotDoChat( chance, string, isTeam, kind, target )
 	
 	if ( getdvarint( "bots_real_chat" ) )
 	{
-		string = self humanizeChat( string );
+		string = self humanizeChat( string, kind );
 		
 		// people take a moment to type
 		wait clamp( 0.4 + string.size * 0.035, 0.4, 3.5 );
@@ -150,7 +153,7 @@ isChatLetter( c )
 	Makes a chat line look typed by this bot: casual bots type in lowercase and skip the full stop,
 	sloppy or tilted bots sometimes swap two letters.
 */
-humanizeChat( string )
+humanizeChat( string, kind )
 {
 	trait = self maps\mp\bots\_bot_realism::BotGetTrait();
 	mood = self maps\mp\bots\_bot_realism::BotGetMood();
@@ -185,6 +188,11 @@ humanizeChat( string )
 	else if ( gen == "zoomer" || gen == "alpha" )
 	{
 		lowerChance = 100;
+	}
+	
+	if ( isdefined( kind ) && kind == "flamecaps" )
+	{
+		lowerChance = 0;
 	}
 	
 	if ( randomint( 100 ) < lowerChance )
@@ -569,36 +577,191 @@ bot_chat_chat_player_watch( chatstr, message, player, is_hidden, e, f, g )
 	
 	msg = tolower( message );
 	mentioned = issubstr( msg, tolower( self.name ) );
-	reply = self getChatReply( msg, player.name );
+	talking = self inConvoWith( player );
+	justKilled = ( isdefined( self.bot_real_lastvictim ) && self.bot_real_lastvictim == player && !maps\mp\bots\_bot_realism::timeSince( self.bot_real_lastvictim_time, 15000 ) );
 	
-	if ( !isdefined( reply ) )
+	// trash talk aimed at this bot gets flamed back, harder each time
+	if ( getdvarint( "bots_real_banter" ) && getdvarint( "bots_real_flame" ) > 0 && isInsult( msg ) && ( mentioned || talking || justKilled ) )
 	{
-		if ( !mentioned )
-		{
-			return;
-		}
-		
-		reply = random( strtok( "?|what|yes?|hi " + player.name, "|" ) );
+		self thread flameBackAt( player );
+		return;
 	}
 	
-	// only one bot answers each message, unless you call a bot by name
-	if ( !mentioned )
+	// in the middle of a topic: carry it on, whatever they said
+	if ( self topicActive( player ) )
+	{
+		line = self topicReply( msg, player );
+		
+		if ( isdefined( line ) )
+		{
+			self startConvo( player );
+			player.bot_real_talking_to = self;
+			player.bot_real_talking_time = gettime();
+			
+			wait randomfloatrange( 0.8, 2.2 );
+			self BotDoChat( 100, line, undefined, "reply" );
+		}
+		
+		return;
+	}
+	
+	// someone else is already talking with this player
+	if ( !mentioned && !talking && isdefined( player.bot_real_talking_to ) && player.bot_real_talking_to != self && !maps\mp\bots\_bot_realism::timeSince( player.bot_real_talking_time, 25000 ) )
+	{
+		return;
+	}
+	
+	topic = getTopicForMessage( msg );
+	reply = undefined;
+	
+	if ( !isdefined( topic ) )
+	{
+		reply = self getChatReply( msg, player.name );
+		
+		if ( !isdefined( reply ) )
+		{
+			if ( !mentioned && !talking )
+			{
+				return;
+			}
+			
+			// in a conversation the bot answers anything
+			if ( isQuestion( msg ) )
+			{
+				reply = fillLine( self getReactPool( "question" ), player.name );
+			}
+			else
+			{
+				reply = fillLine( self getReactPool( "convo" ), player.name );
+			}
+			
+			if ( !isdefined( reply ) )
+			{
+				reply = "?";
+			}
+		}
+	}
+	
+	// one bot answers each message, unless the player is talking to a bot
+	if ( !mentioned && !talking )
 	{
 		if ( isdefined( level.bots_chat_reply_time ) && !maps\mp\bots\_bot_realism::timeSince( level.bots_chat_reply_time, 4000 ) )
 		{
 			return;
 		}
 		
-		if ( randomint( 100 ) >= 50 )
+		if ( randomint( 100 ) >= 65 )
 		{
 			return;
 		}
 	}
 	
 	level.bots_chat_reply_time = gettime();
+	self startConvo( player );
+	player.bot_real_talking_to = self;
+	player.bot_real_talking_time = gettime();
+	
+	// the message started a topic: the bot takes it up and keeps it going
+	if ( isdefined( topic ) )
+	{
+		self startTopic( topic, player );
+		reply = self topicReply( msg, player );
+		
+		if ( !isdefined( reply ) )
+		{
+			return;
+		}
+	}
 	
 	wait randomfloatrange( 0.5, 2 );
-	self BotDoChat( 100, reply );
+	self BotDoChat( 100, reply, undefined, "reply" );
+	
+	if ( !mentioned && !isdefined( topic ) )
+	{
+		level thread chimeIn( self );
+	}
+}
+
+/*
+	True if the message reads like a question.
+*/
+isQuestion( msg )
+{
+	if ( msg.size && msg[ msg.size - 1 ] == "?" )
+	{
+		return true;
+	}
+	
+	starts = strtok( "who ,what ,why ,how ,where ,when ,anyone ,does ,is ,are ,can ", "," );
+	
+	for ( i = 0; i < starts.size; i++ )
+	{
+		if ( isStrStart( msg, starts[ i ] ) )
+		{
+			return true;
+		}
+	}
+	
+	return false;
+}
+
+/*
+	Topics bots have a reply for, beyond the basics. undefined if none.
+*/
+getChatTopic( msg )
+{
+	if ( msg == "ty" || isStrStart( msg, "ty " ) || issubstr( msg, "thanks" ) || issubstr( msg, "thx" ) || issubstr( msg, "tysm" ) )
+	{
+		return "thanks";
+	}
+	
+	if ( issubstr( msg, "sorry" ) || issubstr( msg, "my bad" ) || msg == "mb" || isStrStart( msg, "mb " ) )
+	{
+		return "sorry";
+	}
+	
+	if ( msg == "wp" || isStrStart( msg, "wp " ) || issubstr( msg, "well played" ) || issubstr( msg, "nice game" ) || issubstr( msg, "good game" ) )
+	{
+		return "nicegame";
+	}
+	
+	if ( issubstr( msg, "1v1" ) )
+	{
+		return "oneonone";
+	}
+	
+	if ( issubstr( msg, "report" ) )
+	{
+		return "report";
+	}
+	
+	if ( issubstr( msg, "help" ) )
+	{
+		return "help";
+	}
+	
+	// whole words only, "flag" and "camping" shouldn't count
+	if ( isStrStart( msg, "lag" ) || issubstr( msg, " lag" ) || isStrStart( msg, "ping" ) || issubstr( msg, " ping" ) )
+	{
+		return "lag";
+	}
+	
+	if ( issubstr( msg, "camp" ) )
+	{
+		return "camper";
+	}
+	
+	if ( issubstr( msg, "wtf" ) || issubstr( msg, "omg" ) || issubstr( msg, "what the" ) )
+	{
+		return "wtf";
+	}
+	
+	if ( msg == "rip" || isStrStart( msg, "rip " ) || msg == "f" )
+	{
+		return "rip";
+	}
+	
+	return undefined;
 }
 
 /*
@@ -607,6 +770,13 @@ bot_chat_chat_player_watch( chatstr, message, player, is_hidden, e, f, g )
 getChatReply( msg, name )
 {
 	pool = undefined;
+	
+	topic = getChatTopic( msg );
+	
+	if ( isdefined( topic ) )
+	{
+		return fillLine( self getReactPool( topic ), name );
+	}
 	
 	if ( issubstr( msg, "glhf" ) || issubstr( msg, "gl hf" ) || issubstr( msg, "good luck" ) )
 	{
@@ -682,6 +852,12 @@ getChatReply( msg, name )
 	
 	if ( !isdefined( pool ) )
 	{
+		// an unanswered question anyone can take a stab at
+		if ( isQuestion( msg ) )
+		{
+			return fillLine( self getReactPool( "question" ), name );
+		}
+		
 		return undefined;
 	}
 	
@@ -695,12 +871,57 @@ bot_chat_connection_player_watch( conn, player, playername, d, e, f, g )
 {
 	self endon( "disconnect" );
 	
+	if ( !getdvarint( "bots_real_reactive" ) || !isdefined( playername ) )
+	{
+		return;
+	}
+	
+	if ( !isdefined( level.bots_real_humans ) )
+	{
+		level.bots_real_humans = [];
+		level.bots_real_greeted = [];
+	}
+	
 	switch ( conn )
 	{
 		case "connected":
+			if ( !isdefined( player ) || player is_bot() )
+			{
+				return;
+			}
+			
+			level.bots_real_humans[ playername ] = true;
+			
+			// one bot says hi, once they've loaded in
+			if ( !maps\mp\bots\_bot_realism::timeSince( level.bots_real_greeted[ playername ], 30000 ) || randomint( 100 ) >= 40 * self getChattiness() )
+			{
+				return;
+			}
+			
+			level.bots_real_greeted[ playername ] = gettime();
+			wait randomfloatrange( 8, 14 );
+			
+			if ( isdefined( player ) )
+			{
+				self BotDoChat( 100, fillLine( self getReactPool( "greet" ), playername ), undefined, "reply" );
+			}
+			
 			break;
 			
 		case "disconnected":
+			if ( !isdefined( level.bots_real_humans[ playername ] ) || isdefined( level.bots_real_greeted[ "bye_" + playername ] ) )
+			{
+				return;
+			}
+			
+			if ( randomint( 100 ) >= 35 * self getChattiness() )
+			{
+				return;
+			}
+			
+			level.bots_real_greeted[ "bye_" + playername ] = true;
+			wait randomfloatrange( 1, 3 );
+			self BotDoChat( 100, fillLine( self getReactPool( "bye" ), playername ), undefined, "reply" );
 			break;
 	}
 }
@@ -1510,6 +1731,14 @@ bot_chat_killed_watch( victim )
 		return;
 	}
 	
+	self.bot_real_lastvictim = victim;
+	self.bot_real_lastvictim_time = gettime();
+	
+	if ( self maybeStartFlameWar( victim ) )
+	{
+		return;
+	}
+	
 	message = "";
 	
 	switch ( randomint( 42 ) )
@@ -1687,7 +1916,7 @@ bot_chat_killed_watch( victim )
 			break;
 	}
 	
-	chance = 5;
+	chance = 10;
 	kind = "kill";
 	baitChance = 0;
 	
@@ -2018,7 +2247,7 @@ bot_chat_death_watch( killer, last_ks )
 			break;
 	}
 	
-	chance = 8;
+	chance = 12;
 	kind = undefined;
 	
 	if ( self maps\mp\bots\_bot_realism::BotGetMood() == "tilted" && randomint( 100 ) < getdvarint( "bots_real_rage" ) )
@@ -2910,7 +3139,7 @@ banterListener()
 	{
 		level waittill( "bots_real_said", speaker, kind, target );
 		
-		if ( !getdvarint( "bots_real_banter" ) || !isdefined( speaker ) || ( isdefined( kind ) && kind == "reply" ) )
+		if ( !getdvarint( "bots_real_banter" ) || !isdefined( speaker ) || ( isdefined( kind ) && ( kind == "reply" || kind == "flame" || kind == "flamecaps" ) ) )
 		{
 			continue;
 		}
@@ -2993,6 +3222,12 @@ banterRespond( speaker, kind, target )
 			{
 				responder = pickBanterBot( speaker, "other" );
 				
+				if ( isdefined( responder ) && getdvarint( "bots_real_flame" ) > 0 && flameWarAvailable() && randomint( 100 ) < getdvarint( "bots_real_flame" ) )
+				{
+					responder thread flameWar( speaker );
+					return;
+				}
+				
 				if ( isdefined( responder ) )
 				{
 					pool = responder getModernPool( "bait" );
@@ -3070,6 +3305,2406 @@ banterRespond( speaker, kind, target )
 	}
 	
 	responder BotDoChat( 100, modernLine( pool, name ), undefined, "reply" );
+}
+
+/*
+	Flame war lines in the bot's era voice. kind is flame, meltdown (all caps), pile (bystanders) or bail (ending it).
+*/
+getFlamePool( kind )
+{
+	switch ( self getChatGen() )
+	{
+		case "millennial":
+			switch ( kind )
+			{
+				case "flame":
+					return "%n you're so bad it's actually impressive|%n uninstall|%n i've seen stormtroopers aim better|cry more %n|%n mad cuz bad|%n is the reason shampoo has instructions|keyboard warrior %n|%n you peaked in 2009|sit down %n, adults are talking|%n reported for being bad|%n your k/d is a cry for help|%n go back to hello kitty island";
+					
+				case "meltdown":
+					return "1V1 ME ON RUST NO SCOPES %n|I WILL FIND YOU %n|%n MEET ME ON RUST|UR SO BAD %n|OMG SHUT UP %n|I'M SCREENSHOTTING THIS %n|%n BLOCKED REPORTED DELETED|THIS IS WHY I QUIT HALO";
+					
+				case "pile":
+					return "lol|ooooh|get rekt %n|grab the popcorn|this is better than the match|someone clip this|%n just got roasted";
+					
+				case "bail":
+					return "whatever, muted|k|not reading all that|cool story, blocked";
+			}
+			
+			break;
+			
+		case "zoomer":
+			switch ( kind )
+			{
+				case "flame":
+					return "%n you're actually so mid|%n is the npc of this lobby|ratio + %n fell off + nobody asked|%n plays with a steering wheel|%n is so washed it's crazy|%n stay mad|bro %n is down astronomical|%n your aim is on airplane mode|%n got negative game sense|not %n yapping|%n is literally a bot|%n go touch grass fr";
+					
+				case "meltdown":
+					return "1V1 ME RN %n|%n BRO IS YAPPING|NAH %n IS ACTUALLY TWEAKING|I'M CLIPPING THIS %n|%n YOU'RE COOKED FR FR|ON GOD %n IS WASHED|BRO I'M CRASHING OUT ON %n|%n SAY THAT AGAIN";
+					
+				case "pile":
+					return "chat is this real|bro got cooked|%n is getting violated|lmaooo|not the flame war|this is cinema|%n is not recovering from this";
+					
+				case "bail":
+					return "ok and?|muted lol|cope + muted|not reading allat";
+			}
+			
+			break;
+			
+		case "alpha":
+			switch ( kind )
+			{
+				case "flame":
+					return "%n is so ohio it's crazy|%n has -10000 aura|%n is a skibidi toilet|%n got zero rizz and zero aim|%n is the biggest npc|%n got fanum taxed by the whole lobby|%n is not sigma, %n is beta|%n smells like ohio|%n's aura is in debt|mogged, %n. mogged.|%n plays like a roblox noob|%n go back to toca boca";
+					
+				case "meltdown":
+					return "%n I'M TELLING MY MOM|%n IS SO OHIO|MY DAD WORKS AT ACTIVISION %n|%n -1 MILLION AURA|SKIBIDI %n SKIBIDI|%n I'M GONNA FANUM TAX YOUR HOUSE|%n YOU'RE ADOPTED|%n I HAVE 1000 ROBUX AND YOU HAVE NOTHING";
+					
+				case "pile":
+					return "this is so ohio|%n lost all their aura|chat is this skibidi|sigma fight|W drama|%n got mogged in chat too";
+					
+				case "bail":
+					return "blocked|i'm telling my mom (again)|ok bye npc|you're not even sigma, bye";
+			}
+			
+			break;
+			
+		case "boomer":
+			switch ( kind )
+			{
+				case "flame":
+					return "Listen here, %n, I've been gaming since Pong.|%n, your parents must be so proud.|In my day we'd call you a bum, %n.|%n couldn't hit the broad side of a barn.|Go to your room, %n.|%n, I've got grandchildren better than you.|Mind your manners, %n.|%n, you're grounded.|I'm calling your mother, %n.|Pathetic, %n. Absolutely pathetic.|%n, you play like you're wearing oven mitts.|%n, this is why nobody sends you birthday cards.";
+					
+				case "meltdown":
+					return "THAT'S IT, %n. OUTSIDE. NOW.|I'LL HAVE YOU KNOW I SERVED, %n.|%n, I'M WRITING TO YOUR CONGRESSMAN.|I WANT TO SPEAK TO %n'S MANAGER.|YOU KIDS GET OFF MY SERVER.|%n, I WILL TURN THIS CAR AROUND.|DON'T MAKE ME COME OVER THERE, %n.|BACK IN MY DAY WE SETTLED THIS WITH FISTICUFFS, %n.";
+					
+				case "pile":
+					return "Boys, boys, settle down.|Now, now, play nice.|Is this what they call a flame war?|Somebody call a moderator.|In my day we shook hands.|Language, gentlemen.";
+					
+				case "bail":
+					return "I'm done talking to you.|Goodnight.|I don't have to take this.|I'm going to bed.";
+			}
+			
+			break;
+	}
+	
+	return "lol";
+}
+
+/*
+	Starts a flame war with another bot if the dice say so. Returns true if one started.
+*/
+maybeStartFlameWar( other )
+{
+	if ( !getdvarint( "bots_real_banter" ) || !isdefined( other ) || !isplayer( other ) || !other is_bot() || !isdefined( other.pers[ "bots" ] ) )
+	{
+		return false;
+	}
+	
+	chance = getdvarint( "bots_real_flame" );
+	
+	if ( chance <= 0 )
+	{
+		return false;
+	}
+	
+	if ( self maps\mp\bots\_bot_realism::BotGetMood() == "cocky" )
+	{
+		chance += 20;
+	}
+	
+	// bad blood makes it personal
+	myGrudge = self maps\mp\bots\_bot_realism::getGrudgeName();
+	theirGrudge = other maps\mp\bots\_bot_realism::getGrudgeName();
+	
+	if ( ( isdefined( myGrudge ) && myGrudge == other.name ) || ( isdefined( theirGrudge ) && theirGrudge == self.name ) )
+	{
+		chance += 30;
+	}
+	
+	if ( randomint( 100 ) >= chance || !flameWarAvailable() )
+	{
+		return false;
+	}
+	
+	self thread flameWar( other );
+	return true;
+}
+
+/*
+	One flame war at a time, with a short breather in between.
+*/
+flameWarAvailable()
+{
+	// a war whose bot disconnected mid-way never clears the flag, so a minute counts as over
+	if ( isdefined( level.bots_flamewar ) && level.bots_flamewar && !maps\mp\bots\_bot_realism::timeSince( level.bots_flamewar_start, 60000 ) )
+	{
+		return false;
+	}
+	
+	return maps\mp\bots\_bot_realism::timeSince( level.bots_flamewar_time, 15000 );
+}
+
+/*
+	Two bots go back and forth: taunt, flame, all caps meltdown, sometimes someone bails.
+	Bystanders pile on. Afterwards they hold a grudge against each other.
+*/
+flameWar( other )
+{
+	if ( !flameWarAvailable() )
+	{
+		return;
+	}
+	
+	level.bots_flamewar = true;
+	level.bots_flamewar_start = gettime();
+	
+	speaker = self;
+	target = other;
+	length = randomintrange( 3, 7 );
+	
+	// really heated lobbies go longer
+	if ( getdvarint( "bots_real_flame" ) >= 70 )
+	{
+		length = randomintrange( 5, 10 );
+	}
+	
+	for ( i = 0; i < length; i++ )
+	{
+		if ( !isdefined( speaker ) || !isdefined( target ) || level.gameended )
+		{
+			break;
+		}
+		
+		kind = "flame";
+		
+		if ( i == 0 )
+		{
+			pool = speaker getModernPool( "bait" );
+		}
+		else if ( i == length - 1 && i > 2 && randomint( 100 ) < 40 )
+		{
+			pool = speaker getFlamePool( "bail" );
+		}
+		else if ( i >= length / 2 )
+		{
+			pool = speaker getFlamePool( "meltdown" );
+			kind = "flamecaps";
+		}
+		else
+		{
+			pool = speaker getFlamePool( "flame" );
+		}
+		
+		speaker BotDoChat( 100, modernLine( pool, target.name ), undefined, kind );
+		
+		// the crowd gets involved
+		if ( randomint( 100 ) < 30 )
+		{
+			level thread flameBystander( speaker, target );
+		}
+		
+		wait randomfloatrange( 3.2, 4.5 );
+		
+		temp = speaker;
+		speaker = target;
+		target = temp;
+	}
+	
+	// it carries over into the game: they go hunting each other
+	if ( isdefined( self ) && isdefined( other ) )
+	{
+		self maps\mp\bots\_bot_realism::setGrudgeAgainst( other );
+		other maps\mp\bots\_bot_realism::setGrudgeAgainst( self );
+	}
+	
+	level.bots_flamewar = false;
+	level.bots_flamewar_time = gettime();
+}
+
+/*
+	A bot watching the flame war chimes in about the one on the receiving end.
+*/
+flameBystander( speaker, target )
+{
+	bystander = undefined;
+	
+	for ( tries = 0; tries < 4 && !isdefined( bystander ); tries++ )
+	{
+		pick = pickBanterBot( speaker );
+		
+		if ( isdefined( pick ) && isdefined( target ) && pick != target )
+		{
+			bystander = pick;
+		}
+	}
+	
+	if ( !isdefined( bystander ) )
+	{
+		return;
+	}
+	
+	wait randomfloatrange( 1.8, 2.6 );
+	
+	if ( !isdefined( bystander ) || !isdefined( target ) )
+	{
+		return;
+	}
+	
+	bystander BotDoChat( 100, modernLine( bystander getFlamePool( "pile" ), target.name ), undefined, "flame" );
+}
+
+/*
+	Lines for reacting to the match and to players, | separated.
+	%n is a player's name, %w a weapon, %f a flag letter.
+*/
+getReactPool( kind )
+{
+	gen = self getChatGen();
+	
+	switch ( kind )
+	{
+		case "greet":
+			switch ( gen )
+			{
+				case "millennial":
+					return "hey %n|welcome %n|sup %n|yo %n, welcome to the lobby";
+					
+				case "zoomer":
+					return "yo %n|%n pulled up|w %n|hey %n";
+					
+				case "alpha":
+					return "hi %n|%n joined the sigma lobby|welcome %n, don't be ohio|yo %n";
+					
+				case "boomer":
+					return "Welcome, %n!|Hello there, %n.|Good evening, %n. Grab a seat.|Ah, a new face. Hello, %n.";
+			}
+			
+			break;
+			
+		case "bye":
+			switch ( gen )
+			{
+				case "millennial":
+					return "bye %n|cya %n|rage quit?|%n left lol";
+					
+				case "zoomer":
+					return "%n dipped|bro left|%n rage quit fr|cya %n";
+					
+				case "alpha":
+					return "%n left, so ohio|bye %n|%n got scared|-1000 aura for leaving %n";
+					
+				case "boomer":
+					return "Goodbye, %n.|Drive safe, %n.|And there goes %n.|Was it something I said?";
+			}
+			
+			break;
+			
+		case "convo":
+			switch ( gen )
+			{
+				case "millennial":
+					return "lol true|yeah|for real|haha|agreed|no way|lol same|that's what i'm saying";
+					
+				case "zoomer":
+					return "fr|real|no cap|bet|true|facts|lowkey yeah|ong";
+					
+				case "alpha":
+					return "fr fr|no cap|sigma|bet|real|facts|that's so true";
+					
+				case "boomer":
+					return "Indeed.|I see.|Is that so?|Quite right.|Hmm.|Fair enough.|You don't say.";
+			}
+			
+			break;
+			
+		case "question":
+			switch ( gen )
+			{
+				case "millennial":
+					return "idk|no idea|maybe?|good question|ask google lol|ask someone else lol";
+					
+				case "zoomer":
+					return "idk bro|no clue|maybe|who knows|idk fr";
+					
+				case "alpha":
+					return "idk|ask skibidi|no clue fr|maybe, idk";
+					
+				case "boomer":
+					return "I couldn't tell you, %n.|Beats me.|Ask my grandson.|I'm not sure, young man.";
+			}
+			
+			break;
+			
+		case "ambient":
+			switch ( gen )
+			{
+				case "millennial":
+					return "anyone else lagging?|this map brings back memories|who's got the uav|i miss mw2 lobbies|this lobby is actually fun|brb getting a drink|gg so far";
+					
+				case "zoomer":
+					return "this lobby is goated|who's actually cracked here|ngl this map is mid|my fps is dying|chat is this game fun|lowkey having fun";
+					
+				case "alpha":
+					return "who's the sigma of this lobby|this map is so ohio|i'm aura farming rn|who wants to 1v1|my mom said 10 more minutes";
+					
+				case "boomer":
+					return "Does anyone know how to turn off the music?|My grandson set this up for me.|Lovely weather on this map.|Is this the one with the helicopters?|Back in my day games came on cartridges.";
+			}
+			
+			break;
+			
+		case "askhuman":
+			switch ( gen )
+			{
+				case "millennial":
+					return "%n how are you so good|%n what's your k/d|%n carry me pls|%n are you even trying lol|%n what class are you running?";
+					
+				case "zoomer":
+					return "%n you're actually cracked|%n what's your sens|%n carry me fr|%n are you a pro or what|%n why are you so sweaty";
+					
+				case "alpha":
+					return "%n are you sigma?|%n what's your aura level|%n are you on roblox too|%n carry me pls";
+					
+				case "boomer":
+					return "%n, how do you do it?|%n, do your parents know you're this good?|%n, any tips for an old timer?|%n, are you one of those streamers?";
+			}
+			
+			break;
+			
+		case "streak_enemy":
+			switch ( gen )
+			{
+				case "millennial":
+					return "someone stop %n|%n is on a rampage|%n is on a streak, focus him|how is %n still alive";
+					
+				case "zoomer":
+					return "%n is cooking us|somebody kill %n pls|%n is actually him|we're getting farmed by %n";
+					
+				case "alpha":
+					return "%n has infinite aura|%n is too sigma|stop %n pls|%n is aura farming us";
+					
+				case "boomer":
+					return "Somebody stop that %n!|That %n is on a tear.|Where is %n getting all these kills?|Can't anyone get %n?";
+			}
+			
+			break;
+			
+		case "streak_team":
+			switch ( gen )
+			{
+				case "millennial":
+					return "go %n!|%n is carrying|nice streak %n|beast mode %n";
+					
+				case "zoomer":
+					return "W %n|%n is him|%n carrying fr|%n diff";
+					
+				case "alpha":
+					return "%n is so sigma|+1000 aura %n|%n is mogging them|%n carry us";
+					
+				case "boomer":
+					return "Well done, %n!|Keep it up, %n.|That's the spirit, %n!|Atta boy, %n!";
+			}
+			
+			break;
+			
+		case "tease":
+			switch ( gen )
+			{
+				case "millennial":
+					return "%n is having a rough day|%n maybe try a different class|free kills from %n|%n is our favourite player";
+					
+				case "zoomer":
+					return "%n is getting farmed|%n is down bad|%n's k/d is crying|%n please log off";
+					
+				case "alpha":
+					return "%n has no aura left|%n is so ohio rn|%n needs a sigma class|%n is an npc today";
+					
+				case "boomer":
+					return "Hang in there, %n. Or don't.|%n, maybe try checkers.|Rough night, %n?|Practice makes perfect, %n.";
+			}
+			
+			break;
+			
+		case "console":
+			switch ( gen )
+			{
+				case "millennial":
+					return "you got this %n|unlucky %n, keep going|shake it off %n|they're just camping %n";
+					
+				case "zoomer":
+					return "you're good %n|lock in %n you got this|it's fine %n|next life %n";
+					
+				case "alpha":
+					return "you still have aura %n|stay sigma %n|you got this %n|comeback arc %n";
+					
+				case "boomer":
+					return "Chin up, %n.|Keep at it, %n.|Don't give up, %n.|We've all been there, %n.";
+			}
+			
+			break;
+			
+		case "firstblood":
+			switch ( gen )
+			{
+				case "millennial":
+					return "first blood %n|and %n gets first blood|first blood!";
+					
+				case "zoomer":
+					return "%n got first blood|first blood W|%n opened it up";
+					
+				case "alpha":
+					return "%n got first blood, sigma|first blood aura|%n started it";
+					
+				case "boomer":
+					return "First blood goes to %n.|And we're off!|Well, that didn't take long.";
+			}
+			
+			break;
+			
+		case "multikill":
+			switch ( gen )
+			{
+				case "millennial":
+					return "did %n just get a triple?|%n wtf|%n is insane";
+					
+				case "zoomer":
+					return "%n just wiped them|nah %n is crazy|%n is actually him";
+					
+				case "alpha":
+					return "%n mogged three people|%n has crazy aura|%n is the sigma";
+					
+				case "boomer":
+					return "Goodness, %n!|Did you see that, %n?|My word, %n.";
+			}
+			
+			break;
+			
+		case "uav_enemy":
+			return "they have a uav up|enemy uav, watch out|their uav is up, stay quiet|uav up, someone shoot it";
+			
+		case "uav_team":
+			return "nice uav %n|thanks for the uav %n|uav up|good uav";
+			
+		case "air_enemy":
+			return "%n's air support is up, get inside|who called that in?|%n has air support up|air support incoming, find cover";
+			
+		case "air_team":
+			return "nice streak %n|thanks for the support %n|%n's got air support up|let's go %n";
+			
+		case "flag_ours":
+			return "we got %f|%f is ours|took %f|%f captured|we got a flag";
+			
+		case "flag_lost":
+			return "they took %f|we lost %f|%f is gone, someone retake it|they have %f|they took one of our flags";
+			
+		case "bomb_att":
+			return "bomb's planted, defend it|bomb down, hold it|planted, cover the bomb";
+			
+		case "bomb_def":
+			return "bomb's down, defuse it|they planted, go go go|someone defuse!";
+			
+		case "defused_def":
+			return "defused!|nice defuse|phew, defused";
+			
+		case "defused_att":
+			return "they defused it|no way they defused that|ugh, defused";
+			
+		case "ctf_lost":
+			return "they have our flag|%n has our flag, stop him|flag's gone, get it back";
+			
+		case "ctf_took":
+			return "we have their flag|%n has their flag, cover him|flag taken, escort %n";
+			
+		case "hq_ours":
+			return "hq is ours|we got the hq|hold the hq";
+			
+		case "hq_lost":
+			return "they have the hq|they took the hq|get the hq back";
+			
+		case "lead_gained":
+			return "we're ahead now|we took the lead|keep it up, we're winning";
+			
+		case "lead_lost":
+			return "they took the lead|we're behind, pick it up|come on, they're winning now";
+			
+		case "minute_left":
+			return "one minute left|last minute, let's go|a minute left, push";
+			
+		case "thanks":
+			return "np|no problem|anytime|you're welcome";
+			
+		case "sorry":
+			return "all good|np|it happens|no worries";
+			
+		case "wtf":
+			return "ikr|lol what|right?|same reaction";
+			
+		case "lag":
+			return "same|lag is real today|it's the servers|my ping is crying too";
+			
+		case "camper":
+			return "says the camper|i'm not camping, i'm holding an angle|camping is a strategy|who's camping?";
+			
+		case "oneonone":
+			return "bet|anytime|1v1 me on rust|you'd lose";
+			
+		case "report":
+			return "for what lol|go ahead|report me for being good?";
+			
+		case "help":
+			return "on my way|where?|coming";
+			
+		case "nicegame":
+			return "thanks|you too|appreciate it|wp";
+			
+		case "rip":
+			return "rip|f|rip lol";
+			
+		case "weapon_shotgun":
+			return "shotguns in this game are broken|nice %w %n, real skillful|%n and that %w...|of course it's a shotgun";
+			
+		case "weapon_sniper":
+			return "quickscoped by %n|%n with the sniper again|nice shot %n|%n is sniping all game";
+			
+		case "weapon_launcher":
+			return "a %w? really %n|noob tube!!|explosives, of course|%n just blew me up";
+			
+		case "weapon_riot":
+			return "killed by a riot shield. great.|%n and that shield...|riot shield? seriously?";
+			
+		case "weapon_lmg":
+			return "%n is spraying with the %w|that %w is so broken|lmg spam from %n again";
+			
+		case "weapon_smg":
+			return "that %w is so broken|%n's %w shreds|smgs in this game man";
+			
+		case "weapon_pistol":
+			return "a pistol?? come on %n|killed by a %w lol";
+			
+		case "weapon_assault":
+			return "nice %w %n|%n's %w is cracked|that %w hits hard";
+			
+		case "brag_weapon":
+			return "my %w never misses|this %w is so good|love this %w|%w on top";
+	}
+	
+	return undefined;
+}
+
+/*
+	How talkative this bot is: quiet bots chat less, yappers chat more.
+*/
+getChattiness()
+{
+	if ( !isdefined( self.pers[ "bots" ] ) )
+	{
+		return 1;
+	}
+	
+	if ( !isdefined( self.pers[ "bots" ][ "chattiness" ] ) )
+	{
+		roll = randomint( 100 );
+		chatty = 1;
+		
+		if ( roll < 25 )
+		{
+			chatty = 0.4;
+		}
+		else if ( roll >= 75 )
+		{
+			chatty = 2;
+		}
+		
+		self.pers[ "bots" ][ "chattiness" ] = chatty;
+	}
+	
+	return self.pers[ "bots" ][ "chattiness" ];
+}
+
+/*
+	Picks a line from a | separated pool and fills in %n (name), %w (weapon) and %f (flag).
+	Lines needing something that isn't given are skipped. Returns undefined if nothing fits.
+*/
+fillLine( pool, name, weap, flagName )
+{
+	if ( !isdefined( pool ) )
+	{
+		return undefined;
+	}
+	
+	all = strtok( pool, "|" );
+	lines = [];
+	
+	for ( i = 0; i < all.size; i++ )
+	{
+		if ( !isdefined( name ) && issubstr( all[ i ], "%n" ) )
+		{
+			continue;
+		}
+		
+		if ( !isdefined( weap ) && issubstr( all[ i ], "%w" ) )
+		{
+			continue;
+		}
+		
+		if ( !isdefined( flagName ) && issubstr( all[ i ], "%f" ) )
+		{
+			continue;
+		}
+		
+		lines[ lines.size ] = all[ i ];
+	}
+	
+	if ( !lines.size )
+	{
+		return undefined;
+	}
+	
+	line = random( lines );
+	out = "";
+	
+	for ( i = 0; i < line.size; i++ )
+	{
+		if ( line[ i ] == "%" && i + 1 < line.size )
+		{
+			if ( line[ i + 1 ] == "n" )
+			{
+				out += name;
+				i++;
+				continue;
+			}
+			
+			if ( line[ i + 1 ] == "w" )
+			{
+				out += weap;
+				i++;
+				continue;
+			}
+			
+			if ( line[ i + 1 ] == "f" )
+			{
+				out += flagName;
+				i++;
+				continue;
+			}
+		}
+		
+		out += line[ i ];
+	}
+	
+	return out;
+}
+
+/*
+	A random bot, optionally only on one team and never the excluded player.
+*/
+pickChatBot( team, exclude )
+{
+	candidates = [];
+	
+	for ( i = 0; i < level.players.size; i++ )
+	{
+		bot = level.players[ i ];
+		
+		if ( !bot is_bot() || !isdefined( bot.pers[ "bots" ] ) || !isdefined( bot.team ) )
+		{
+			continue;
+		}
+		
+		if ( isdefined( exclude ) && bot == exclude )
+		{
+			continue;
+		}
+		
+		if ( isdefined( team ) && level.teambased && bot.team != team )
+		{
+			continue;
+		}
+		
+		candidates[ candidates.size ] = bot;
+	}
+	
+	return random( candidates );
+}
+
+/*
+	Gets a bot (from a team if given) to react with a line from the pool, chance scaled by how talkative it is.
+*/
+reactSay( kind, team, name, weap, flagName, chance, isTeam, exclude )
+{
+	if ( !getdvarint( "bots_real_reactive" ) || getdvarfloat( "bots_main_chat" ) <= 0 )
+	{
+		return;
+	}
+	
+	bot = pickChatBot( team, exclude );
+	
+	if ( !isdefined( bot ) )
+	{
+		return;
+	}
+	
+	if ( randomint( 100 ) >= chance * bot getChattiness() * getdvarfloat( "bots_main_chat" ) )
+	{
+		return;
+	}
+	
+	line = fillLine( bot getReactPool( kind ), name, weap, flagName );
+	
+	if ( !isdefined( line ) )
+	{
+		return;
+	}
+	
+	bot thread reactSpeak( line, isTeam );
+}
+
+/*
+	Says a line after a human-like pause.
+*/
+reactSpeak( line, isTeam )
+{
+	self endon( "disconnect" );
+	
+	wait randomfloatrange( 0.8, 2.2 );
+	self BotDoChat( 100, line, isTeam, "reply" );
+}
+
+/*
+	The other team, undefined in free for all.
+*/
+otherTeamOf( team )
+{
+	if ( !level.teambased || !isdefined( team ) || !isdefined( level.otherteam[ team ] ) )
+	{
+		return undefined;
+	}
+	
+	return level.otherteam[ team ];
+}
+
+/*
+	Short weapon name for chat, like "acr" for iw5_acr_mp_reflex.
+*/
+chatWeaponName( weapon )
+{
+	if ( !isdefined( weapon ) || weapon == "none" || weapon == "" )
+	{
+		return undefined;
+	}
+	
+	if ( issubstr( weapon, "alt_" ) )
+	{
+		return "noob tube";
+	}
+	
+	name = getbaseweaponname( weapon );
+	
+	if ( isStrStart( name, "iw5_" ) )
+	{
+		name = getsubstr( name, 4, name.size );
+	}
+	
+	return name;
+}
+
+/*
+	Which weapon complaint fits the weapon that did the killing.
+*/
+getWeaponTalkKind( weapon, sMeansOfDeath )
+{
+	if ( !isdefined( weapon ) )
+	{
+		return undefined;
+	}
+	
+	if ( issubstr( weapon, "alt_" ) || sMeansOfDeath == "MOD_PROJECTILE" || sMeansOfDeath == "MOD_PROJECTILE_SPLASH" )
+	{
+		return "weapon_launcher";
+	}
+	
+	switch ( getweaponclass( weapon ) )
+	{
+		case "weapon_shotgun":
+			return "weapon_shotgun";
+			
+		case "weapon_sniper":
+			return "weapon_sniper";
+			
+		case "weapon_projectile":
+			return "weapon_launcher";
+			
+		case "weapon_riot":
+			return "weapon_riot";
+			
+		case "weapon_lmg":
+			return "weapon_lmg";
+			
+		case "weapon_smg":
+			return "weapon_smg";
+			
+		case "weapon_pistol":
+		case "weapon_machine_pistol":
+			return "weapon_pistol";
+			
+		case "weapon_assault":
+			return "weapon_assault";
+	}
+	
+	return undefined;
+}
+
+/*
+	Reacts to a kill: first blood, kill streaks, death streaks, multikills, weapon talk.
+*/
+reactToKill( attacker, victim, sWeapon, sMeansOfDeath )
+{
+	if ( !getdvarint( "bots_real_reactive" ) )
+	{
+		return;
+	}
+	
+	// let the game update the streak counters first
+	wait 0.25;
+	
+	if ( !isdefined( attacker ) || !isplayer( attacker ) || !isdefined( victim ) || attacker == victim )
+	{
+		return;
+	}
+	
+	attackerHuman = !attacker is_bot();
+	victimHuman = ( isplayer( victim ) && !victim is_bot() );
+	
+	if ( !isdefined( level.bots_real_firstblood ) )
+	{
+		level.bots_real_firstblood = true;
+		level thread reactSay( "firstblood", undefined, attacker.name, undefined, undefined, 60, false, attacker );
+		return;
+	}
+	
+	// kill streaks: enemies panic, teammates hype
+	streak = attacker.pers[ "cur_kill_streak" ];
+	
+	if ( isdefined( streak ) && streak >= 5 && streak % 5 == 0 )
+	{
+		chance = 35;
+		
+		if ( attackerHuman )
+		{
+			chance = 75;
+		}
+		
+		level thread reactSay( "streak_enemy", otherTeamOf( attacker.team ), attacker.name, undefined, undefined, chance, false, attacker );
+		
+		if ( level.teambased )
+		{
+			level thread reactSay( "streak_team", attacker.team, attacker.name, undefined, undefined, chance / 2, true, attacker );
+		}
+		
+		return;
+	}
+	
+	// a human getting farmed: enemies tease, teammates encourage
+	deaths = victim.pers[ "cur_death_streak" ];
+	
+	if ( victimHuman && isdefined( deaths ) && deaths >= 4 && ( deaths - 4 ) % 3 == 0 )
+	{
+		level thread reactSay( "tease", otherTeamOf( victim.team ), victim.name, undefined, undefined, 45, false, victim );
+		
+		if ( level.teambased )
+		{
+			level thread reactSay( "console", victim.team, victim.name, undefined, undefined, 50, true, victim );
+		}
+		
+		return;
+	}
+	
+	// a human multikill turns heads
+	if ( attackerHuman && isdefined( attacker.bot_real_multi_count ) && attacker.bot_real_multi_count >= 3 )
+	{
+		level thread reactSay( "multikill", undefined, attacker.name, undefined, undefined, 70, false, attacker );
+		return;
+	}
+	
+	// weapon talk: a bot killed by a human complains about the gun, a bot killing a human brags about its own
+	if ( attackerHuman && !victimHuman && victim is_bot() && isdefined( victim.pers[ "bots" ] ) )
+	{
+		kind = getWeaponTalkKind( sWeapon, sMeansOfDeath );
+		
+		if ( isdefined( kind ) && randomint( 100 ) < 25 * victim getChattiness() * getdvarfloat( "bots_main_chat" ) )
+		{
+			line = fillLine( victim getReactPool( kind ), attacker.name, chatWeaponName( sWeapon ) );
+			
+			if ( isdefined( line ) )
+			{
+				victim thread reactSpeak( line, false );
+			}
+		}
+	}
+	else if ( !attackerHuman && victimHuman && isdefined( attacker.pers[ "bots" ] ) )
+	{
+		if ( randomint( 100 ) < 10 * attacker getChattiness() * getdvarfloat( "bots_main_chat" ) )
+		{
+			line = fillLine( attacker getReactPool( "brag_weapon" ), undefined, chatWeaponName( sWeapon ) );
+			
+			if ( isdefined( line ) )
+			{
+				attacker thread reactSpeak( line, false );
+			}
+		}
+	}
+}
+
+/*
+	Upper case letter of a domination flag, undefined if unknown.
+*/
+getFlagLetter( flag )
+{
+	if ( !isdefined( flag.useobj ) )
+	{
+		return undefined;
+	}
+	
+	label = flag.useobj maps\mp\gametypes\_gameobjects::getlabel();
+	
+	if ( !isdefined( label ) || label.size < 2 )
+	{
+		return undefined;
+	}
+	
+	switch ( label[ 1 ] )
+	{
+		case "a":
+			return "A";
+			
+		case "b":
+			return "B";
+			
+		case "c":
+			return "C";
+			
+		case "d":
+			return "D";
+			
+		case "e":
+			return "E";
+	}
+	
+	return undefined;
+}
+
+/*
+	Watches the match for things bots talk about: killstreaks being called, objectives, the lead, the clock.
+*/
+reactWatchMatch()
+{
+	level endon( "game_ended" );
+	
+	gameflagwait( "prematch_done" );
+	
+	seen = [];
+	flagTeams = [];
+	ctfCarriers = [];
+	lastPlanted = false;
+	lastDefused = false;
+	lastHq = undefined;
+	lastLeader = undefined;
+	lastLeadTime = undefined;
+	saidMinute = false;
+	
+	for ( ;; )
+	{
+		wait 1;
+		
+		if ( !getdvarint( "bots_real_reactive" ) )
+		{
+			continue;
+		}
+		
+		if ( !isdefined( level.bots_real_humans ) )
+		{
+			level.bots_real_humans = [];
+			level.bots_real_greeted = [];
+		}
+		
+		for ( i = 0; i < level.players.size; i++ )
+		{
+			if ( !level.players[ i ] is_bot() )
+			{
+				level.bots_real_humans[ level.players[ i ].name ] = true;
+			}
+		}
+		
+		// killstreaks in the air: uavs and air support
+		targets = maps\mp\bots\_bot_realism::getAirTargets();
+		stillThere = [];
+		
+		for ( i = 0; i < targets.size; i++ )
+		{
+			t = targets[ i ];
+			
+			if ( !isdefined( t ) || isplayer( t ) )
+			{
+				continue;
+			}
+			
+			key = t getentitynumber() + "";
+			stillThere[ key ] = t;
+			
+			if ( isdefined( seen[ key ] ) && seen[ key ] == t )
+			{
+				continue;
+			}
+			
+			if ( !isdefined( t.owner ) || !isplayer( t.owner ) )
+			{
+				continue;
+			}
+			
+			owner = t.owner;
+			isUav = ( isdefined( t.model ) && issubstr( t.model, "uav" ) && !issubstr( t.model, "remote" ) );
+			enemyKind = "air_enemy";
+			teamKind = "air_team";
+			
+			if ( isUav )
+			{
+				enemyKind = "uav_enemy";
+				teamKind = "uav_team";
+			}
+			
+			level thread reactSay( enemyKind, otherTeamOf( owner.team ), owner.name, undefined, undefined, 35, false, owner );
+			
+			if ( level.teambased )
+			{
+				level thread reactSay( teamKind, owner.team, owner.name, undefined, undefined, 25, true, owner );
+			}
+		}
+		
+		seen = stillThere;
+		
+		if ( !level.teambased )
+		{
+			continue;
+		}
+		
+		// domination flags
+		if ( level.gametype == "dom" && isdefined( level.flags ) )
+		{
+			for ( i = 0; i < level.flags.size; i++ )
+			{
+				team = level.flags[ i ] maps\mp\gametypes\dom::getflagteam();
+				
+				if ( isdefined( flagTeams[ i ] ) && flagTeams[ i ] != team && ( team == "allies" || team == "axis" ) )
+				{
+					letter = getFlagLetter( level.flags[ i ] );
+					level thread reactSay( "flag_ours", team, undefined, undefined, letter, 40, true );
+					level thread reactSay( "flag_lost", otherTeamOf( team ), undefined, undefined, letter, 40, true );
+				}
+				
+				flagTeams[ i ] = team;
+			}
+		}
+		
+		// search and destroy bomb
+		if ( level.gametype == "sd" && isdefined( level.bombplanted ) )
+		{
+			if ( level.bombplanted && !lastPlanted )
+			{
+				level thread reactSay( "bomb_att", game[ "attackers" ], undefined, undefined, undefined, 50, true );
+				level thread reactSay( "bomb_def", game[ "defenders" ], undefined, undefined, undefined, 50, true );
+			}
+			
+			lastPlanted = level.bombplanted;
+			
+			if ( isdefined( level.bombdefused ) )
+			{
+				if ( level.bombdefused && !lastDefused )
+				{
+					level thread reactSay( "defused_def", game[ "defenders" ], undefined, undefined, undefined, 60, false );
+					level thread reactSay( "defused_att", game[ "attackers" ], undefined, undefined, undefined, 40, false );
+				}
+				
+				lastDefused = level.bombdefused;
+			}
+		}
+		
+		// capture the flag
+		if ( level.gametype == "ctf" && isdefined( level.teamflags ) )
+		{
+			teams = strtok( "allies,axis", "," );
+			
+			for ( i = 0; i < teams.size; i++ )
+			{
+				flag = level.teamflags[ teams[ i ] ];
+				
+				if ( !isdefined( flag ) )
+				{
+					continue;
+				}
+				
+				carrier = flag.carrier;
+				
+				if ( isdefined( carrier ) && isplayer( carrier ) && !isdefined( ctfCarriers[ teams[ i ] ] ) )
+				{
+					level thread reactSay( "ctf_lost", teams[ i ], carrier.name, undefined, undefined, 50, true );
+					level thread reactSay( "ctf_took", otherTeamOf( teams[ i ] ), carrier.name, undefined, undefined, 40, true, carrier );
+				}
+				
+				ctfCarriers[ teams[ i ] ] = carrier;
+			}
+		}
+		
+		// headquarters
+		if ( level.gametype == "koth" && isdefined( level.radio ) && isdefined( level.radio.gameobject ) )
+		{
+			owner = level.radio.gameobject.ownerteam;
+			
+			if ( isdefined( owner ) && ( owner == "allies" || owner == "axis" ) && ( !isdefined( lastHq ) || lastHq != owner ) )
+			{
+				level thread reactSay( "hq_ours", owner, undefined, undefined, undefined, 40, true );
+				level thread reactSay( "hq_lost", otherTeamOf( owner ), undefined, undefined, undefined, 40, true );
+			}
+			
+			lastHq = owner;
+		}
+		
+		// the lead changing, not in round based modes
+		if ( level.gametype != "sd" && level.gametype != "sab" && level.gametype != "dd" && isdefined( game[ "teamScores" ] ) )
+		{
+			leader = undefined;
+			
+			if ( game[ "teamScores" ][ "allies" ] > game[ "teamScores" ][ "axis" ] )
+			{
+				leader = "allies";
+			}
+			else if ( game[ "teamScores" ][ "axis" ] > game[ "teamScores" ][ "allies" ] )
+			{
+				leader = "axis";
+			}
+			
+			if ( isdefined( leader ) )
+			{
+				if ( isdefined( lastLeader ) && leader != lastLeader && maps\mp\bots\_bot_realism::timeSince( lastLeadTime, 45000 ) )
+				{
+					lastLeadTime = gettime();
+					level thread reactSay( "lead_gained", leader, undefined, undefined, undefined, 35, true );
+					level thread reactSay( "lead_lost", otherTeamOf( leader ), undefined, undefined, undefined, 35, true );
+				}
+				
+				lastLeader = leader;
+			}
+		}
+		
+		// the last minute
+		if ( !saidMinute && gettimelimit() > 0 && maps\mp\gametypes\_gamelogic::gettimeremaining() <= 60000 )
+		{
+			saidMinute = true;
+			level thread reactSay( "minute_left", "allies", undefined, undefined, undefined, 50, true );
+			level thread reactSay( "minute_left", "axis", undefined, undefined, undefined, 50, true );
+		}
+	}
+}
+
+/*
+	Every minute or two a bot says something on its own, or asks a human player something.
+*/
+ambientChat()
+{
+	level endon( "game_ended" );
+	
+	gameflagwait( "prematch_done" );
+	
+	for ( ;; )
+	{
+		wait randomintrange( 50, 110 );
+		
+		if ( !getdvarint( "bots_real_reactive" ) )
+		{
+			continue;
+		}
+		
+		bot = pickChatBot();
+		
+		if ( !isdefined( bot ) )
+		{
+			continue;
+		}
+		
+		humans = [];
+		
+		for ( i = 0; i < level.players.size; i++ )
+		{
+			if ( !level.players[ i ] is_bot() )
+			{
+				humans[ humans.size ] = level.players[ i ];
+			}
+		}
+		
+		// nobody to talk to
+		if ( !humans.size )
+		{
+			continue;
+		}
+		
+		if ( randomint( 100 ) >= 60 * bot getChattiness() * getdvarfloat( "bots_main_chat" ) )
+		{
+			continue;
+		}
+		
+		if ( randomint( 100 ) < 40 )
+		{
+			human = random( humans );
+			
+			// usually a question it can follow up on
+			if ( randomint( 100 ) < 60 && bot openTopicWith( human ) )
+			{
+				continue;
+			}
+			
+			line = fillLine( bot getReactPool( "askhuman" ), human.name );
+			
+			if ( isdefined( line ) )
+			{
+				bot startConvo( human );
+				bot thread reactSpeak( line, false );
+			}
+			
+			continue;
+		}
+		
+		line = fillLine( bot getReactPool( "ambient" ) );
+		
+		if ( isdefined( line ) )
+		{
+			bot thread reactSpeak( line, false );
+		}
+	}
+}
+
+/*
+	Remembers that this bot is talking with a player, so it answers whatever they say next.
+*/
+startConvo( player )
+{
+	self.bot_real_convo = spawnstruct();
+	self.bot_real_convo.player = player;
+	self.bot_real_convo.time = gettime();
+}
+
+/*
+	True if this bot is in a conversation with the player.
+*/
+inConvoWith( player )
+{
+	return ( isdefined( self.bot_real_convo ) && isdefined( self.bot_real_convo.player ) && self.bot_real_convo.player == player && !maps\mp\bots\_bot_realism::timeSince( self.bot_real_convo.time, 25000 ) );
+}
+
+/*
+	True if the message reads like an insult.
+*/
+isInsult( msg )
+{
+	words = strtok( "noob,trash,garbage,suck,loser,idiot,dumb,stupid,clown,l2p,get good,git gud,bad,ez", "," );
+	
+	for ( i = 0; i < words.size; i++ )
+	{
+		if ( issubstr( msg, words[ i ] ) )
+		{
+			return true;
+		}
+	}
+	
+	return false;
+}
+
+/*
+	A human insulted this bot: flame back, harder every time they keep going.
+*/
+flameBackAt( player )
+{
+	self endon( "disconnect" );
+	
+	if ( !isdefined( self.bot_real_beef ) )
+	{
+		self.bot_real_beef = [];
+	}
+	
+	beef = self.bot_real_beef[ player.name ];
+	
+	if ( !isdefined( beef ) || maps\mp\bots\_bot_realism::timeSince( beef.time, 30000 ) )
+	{
+		beef = spawnstruct();
+		beef.count = 0;
+	}
+	
+	beef.count++;
+	beef.time = gettime();
+	self.bot_real_beef[ player.name ] = beef;
+	
+	kind = "flame";
+	
+	if ( beef.count == 1 )
+	{
+		pool = self getModernPool( "bait" );
+	}
+	else if ( beef.count == 2 )
+	{
+		pool = self getFlamePool( "flame" );
+	}
+	else
+	{
+		pool = self getFlamePool( "meltdown" );
+		kind = "flamecaps";
+	}
+	
+	self startConvo( player );
+	
+	wait randomfloatrange( 0.8, 1.8 );
+	self BotDoChat( 100, modernLine( pool, player.name ), undefined, kind );
+}
+
+/*
+	Another bot chimes in after a reply.
+*/
+chimeIn( speaker )
+{
+	if ( randomint( 100 ) >= 25 )
+	{
+		return;
+	}
+	
+	bot = pickChatBot( undefined, speaker );
+	
+	if ( !isdefined( bot ) )
+	{
+		return;
+	}
+	
+	line = fillLine( bot getReactPool( "convo" ) );
+	
+	if ( !isdefined( line ) )
+	{
+		return;
+	}
+	
+	wait randomfloatrange( 1.8, 3 );
+	
+	if ( isdefined( bot ) )
+	{
+		bot BotDoChat( 100, line, undefined, "reply" );
+	}
+}
+
+/*
+	What a bot says at a step of a conversation topic, given the kind of answer (yes, no, num or any).
+*/
+getTopicStepPool( topic, step, cls )
+{
+	switch ( topic )
+	{
+		case "kd":
+			switch ( step )
+			{
+				case 0:
+					switch ( cls )
+					{
+						case "num":
+							return "nice, carry us then. how long have you been playing?|not bad at all. how long you been playing?|ok you're better than me lol. been playing long?";
+							
+						case "any":
+							return "that's not a number lol. how long have you been playing?|i'll take that as bad lol. you play a lot?";
+					}
+					
+					break;
+					
+				case 1:
+					switch ( cls )
+					{
+						case "num":
+							return "that explains it|a veteran, respect|oh so you're still new-ish";
+							
+						case "yes":
+							return "you can tell lol|makes sense";
+							
+						case "no":
+							return "could've fooled me|you're a natural then";
+							
+						case "any":
+							return "fair|nice";
+					}
+					
+					break;
+			}
+			
+			break;
+			
+		case "1v1":
+			switch ( step )
+			{
+				case 0:
+					switch ( cls )
+					{
+						case "no":
+							return "scared lol|thought so";
+							
+						case "any":
+							return "bet. rust, no hardscopes, first to 3?|say less. rust, first to 3?";
+					}
+					
+					break;
+					
+				case 1:
+					switch ( cls )
+					{
+						case "yes":
+							return "ok, see you on rust. loser says gg|i'm warming up already";
+							
+						case "no":
+							return "knew it|chicken";
+							
+						case "any":
+							return "sounds like a yes to me|we'll see about that";
+					}
+					
+					break;
+			}
+			
+			break;
+			
+		case "lag":
+			switch ( step )
+			{
+				case 0:
+					switch ( cls )
+					{
+						case "any":
+							return "same here. where are you from?|it's the servers. where you playing from?";
+					}
+					
+					break;
+					
+				case 1:
+					switch ( cls )
+					{
+						case "any":
+							return "ah that explains it|that's far lol|same region i think|the servers here are rough anyway";
+					}
+					
+					break;
+			}
+			
+			break;
+			
+		case "askclass":
+			switch ( step )
+			{
+				case 0:
+					switch ( cls )
+					{
+						case "any":
+							return "running the %w. you?|the %w with sitrep. what about you?|just the %w. you?";
+					}
+					
+					break;
+					
+				case 1:
+					switch ( cls )
+					{
+						case "any":
+							return "nice, i'll try that|solid setup|that's a sweaty setup lol|respect";
+					}
+					
+					break;
+			}
+			
+			break;
+			
+		case "theirclass":
+			switch ( step )
+			{
+				case 0:
+					switch ( cls )
+					{
+						case "any":
+							return "nice, i'll try that|solid|that's a sweaty setup lol|respect";
+					}
+					
+					break;
+			}
+			
+			break;
+			
+		case "map":
+			switch ( step )
+			{
+				case 0:
+					switch ( cls )
+					{
+						case "any":
+							return "it's alright. what's your favourite map?|it's fine. favourite map?";
+					}
+					
+					break;
+					
+				case 1:
+					switch ( cls )
+					{
+						case "any":
+							return "good pick|that one's a classic|terminal is better|ok that's a weird choice lol";
+					}
+					
+					break;
+			}
+			
+			break;
+			
+		case "playing":
+			switch ( step )
+			{
+				case 0:
+					switch ( cls )
+					{
+						case "num":
+							return "that explains it|respect|nice";
+							
+						case "yes":
+							return "you can tell|makes sense";
+							
+						case "no":
+							return "could've fooled me";
+							
+						case "any":
+							return "nice|fair";
+					}
+					
+					break;
+			}
+			
+			break;
+			
+		case "favgun":
+			switch ( step )
+			{
+				case 0:
+					switch ( cls )
+					{
+						case "any":
+							return "solid choice|mid choice tbh|respect|that thing is broken lol";
+					}
+					
+					break;
+			}
+			
+			break;
+			
+		case "bot":
+			switch ( step )
+			{
+				case 0:
+					switch ( cls )
+					{
+						case "yes":
+							return "knew it|beep boop confirmed";
+							
+						case "no":
+							return "that's what a bot would say|suspicious";
+							
+						case "any":
+							return "who are you calling a bot. are YOU a bot?|rude. are you a bot?";
+					}
+					
+					break;
+					
+				case 1:
+					switch ( cls )
+					{
+						case "yes":
+							return "knew it|lol called it";
+							
+						case "no":
+							return "that's what a bot would say|sure, sure";
+							
+						case "any":
+							return "suspicious|hmm";
+					}
+					
+					break;
+			}
+			
+			break;
+			
+		case "carry":
+			switch ( step )
+			{
+				case 0:
+					switch ( cls )
+					{
+						case "any":
+							return "on it, where are you?|stick with me";
+					}
+					
+					break;
+					
+				case 1:
+					switch ( cls )
+					{
+						case "any":
+							return "coming|on my way|got you";
+					}
+					
+					break;
+			}
+			
+			break;
+			
+		case "howareyou":
+			switch ( step )
+			{
+				case 0:
+					switch ( cls )
+					{
+						case "any":
+							return "good, you?|chillin, you?|not bad, you?";
+					}
+					
+					break;
+					
+				case 1:
+					switch ( cls )
+					{
+						case "any":
+							return "nice|same|glad to hear it";
+					}
+					
+					break;
+			}
+			
+			break;
+			
+		case "score":
+			switch ( step )
+			{
+				case 0:
+					switch ( cls )
+					{
+						case "any":
+							return "close game so far|check the scoreboard lol|we can still win this";
+					}
+					
+					break;
+					
+				case 1:
+					switch ( cls )
+					{
+						case "any":
+							return "lock in then|let's go|true";
+					}
+					
+					break;
+			}
+			
+			break;
+	}
+	
+	return undefined;
+}
+
+/*
+	How many exchanges a topic lasts.
+*/
+getTopicSteps( topic )
+{
+	switch ( topic )
+	{
+		case "kd":
+			return 2;
+			
+		case "1v1":
+			return 2;
+			
+		case "lag":
+			return 2;
+			
+		case "askclass":
+			return 2;
+			
+		case "theirclass":
+			return 1;
+			
+		case "map":
+			return 2;
+			
+		case "playing":
+			return 1;
+			
+		case "favgun":
+			return 1;
+			
+		case "bot":
+			return 2;
+			
+		case "carry":
+			return 2;
+			
+		case "howareyou":
+			return 2;
+			
+		case "score":
+			return 2;
+	}
+	
+	return 0;
+}
+
+/*
+	How a bot starts a topic with a player, undefined if it never starts that one.
+*/
+getTopicOpener( topic )
+{
+	switch ( topic )
+	{
+		case "kd":
+			return "%n what's your k/d?|%n what's your k/d btw";
+			
+		case "1v1":
+			return "%n 1v1 me after this?|%n you and me, 1v1, rust";
+			
+		case "theirclass":
+			return "%n what class are you running?|%n what gun is that?";
+			
+		case "playing":
+			return "%n how long have you been playing mw3?|%n you play this a lot?";
+			
+		case "favgun":
+			return "%n what's your favourite gun?|%n best gun in this game?";
+			
+		case "bot":
+			return "%n are you a bot?|%n you're not a bot, right?";
+	}
+	
+	return undefined;
+}
+
+/*
+	Topics a bot can bring up itself.
+*/
+getOpenerTopics()
+{
+	return "kd,1v1,theirclass,playing,favgun,bot";
+}
+
+/*
+	The topic a player's message starts, undefined if none.
+*/
+getTopicForMessage( msg )
+{
+	padded = " " + msg;
+	
+	if ( issubstr( padded, "k/d" ) )
+	{
+		return "kd";
+	}
+	
+	if ( issubstr( padded, "1v1" ) )
+	{
+		return "1v1";
+	}
+	
+	if ( issubstr( padded, " lag" ) || issubstr( padded, "lagging" ) || issubstr( padded, "laggy" ) || issubstr( padded, " ping" ) )
+	{
+		return "lag";
+	}
+	
+	if ( issubstr( padded, "your class" ) || issubstr( padded, "what class" ) || issubstr( padded, "loadout" ) || issubstr( padded, "what gun" ) || issubstr( padded, "your setup" ) )
+	{
+		return "askclass";
+	}
+	
+	if ( issubstr( padded, "this map" ) || issubstr( padded, "the map" ) || issubstr( padded, "fav map" ) || issubstr( padded, "favorite map" ) || issubstr( padded, "favourite map" ) )
+	{
+		return "map";
+	}
+	
+	if ( issubstr( padded, "are you a bot" ) || issubstr( padded, "you a bot" ) || issubstr( padded, "r u a bot" ) || issubstr( padded, "are u a bot" ) || issubstr( padded, "you're a bot" ) || issubstr( padded, "ur a bot" ) )
+	{
+		return "bot";
+	}
+	
+	if ( issubstr( padded, "carry" ) || issubstr( padded, "help me" ) || issubstr( padded, "cover me" ) )
+	{
+		return "carry";
+	}
+	
+	if ( issubstr( padded, "how are you" ) || issubstr( padded, "hru" ) || issubstr( padded, "how r u" ) || issubstr( padded, "how's it going" ) || issubstr( padded, "hows it going" ) || issubstr( padded, "wyd" ) )
+	{
+		return "howareyou";
+	}
+	
+	if ( issubstr( padded, "score" ) || issubstr( padded, "are we winning" ) || issubstr( padded, "who's winning" ) || issubstr( padded, "whos winning" ) )
+	{
+		return "score";
+	}
+	
+	return undefined;
+}
+
+/*
+	How many bot-to-bot dialogues there are.
+*/
+getDialogueCount()
+{
+	return 10;
+}
+
+/*
+	Who says a step of a dialogue: a (who started it) or b.
+*/
+getDialogueRole( d, step )
+{
+	switch ( d )
+	{
+		case 0:
+			roles = "aba";
+			return roles[ step ];
+			
+		case 1:
+			roles = "aba";
+			return roles[ step ];
+			
+		case 2:
+			roles = "aba";
+			return roles[ step ];
+			
+		case 3:
+			roles = "aba";
+			return roles[ step ];
+			
+		case 4:
+			roles = "aba";
+			return roles[ step ];
+			
+		case 5:
+			roles = "aba";
+			return roles[ step ];
+			
+		case 6:
+			roles = "aba";
+			return roles[ step ];
+			
+		case 7:
+			roles = "aba";
+			return roles[ step ];
+			
+		case 8:
+			roles = "aba";
+			return roles[ step ];
+			
+		case 9:
+			roles = "aba";
+			return roles[ step ];
+	}
+	
+	return "a";
+}
+
+/*
+	How many lines a dialogue has.
+*/
+getDialogueSteps( d )
+{
+	return 3;
+}
+
+/*
+	A dialogue line for this bot to say at a step, in its era voice where the line depends on it.
+*/
+getDialoguePool( d, step )
+{
+	gen = self getChatGen();
+	
+	switch ( d )
+	{
+		case 0:
+			switch ( step )
+			{
+				case 0:
+					return "anyone else lagging?|is it just me or is it laggy";
+					
+				case 1:
+					switch ( gen )
+					{
+						case "millennial":
+							return "yeah, it's rough tonight|same here, ugh";
+							
+						case "zoomer":
+							return "lag is crazy rn|nah i'm good actually";
+							
+						case "alpha":
+							return "my wifi is so ohio rn|yes my mom is streaming netflix";
+							
+						case "boomer":
+							return "Is that what the stuttering is?|I thought my computer was broken.";
+					}
+					
+					break;
+					
+				case 2:
+					return "must be the servers|ugh";
+			}
+			
+			break;
+			
+		case 1:
+			switch ( step )
+			{
+				case 0:
+					return "who picked this map|this map again?";
+					
+				case 1:
+					switch ( gen )
+					{
+						case "millennial":
+							return "it's a classic, relax|i kinda like it";
+							
+						case "zoomer":
+							return "it's mid ngl|this map is lowkey goated";
+							
+						case "alpha":
+							return "this map is so ohio|this map has aura";
+							
+						case "boomer":
+							return "Back in my day this was the best map.|I like this one. It has a nice view.";
+					}
+					
+					break;
+					
+				case 2:
+					return "fair|hard disagree|ok";
+			}
+			
+			break;
+			
+		case 2:
+			switch ( step )
+			{
+				case 0:
+					return "is the %w overpowered or is it just me|the %w needs a nerf";
+					
+				case 1:
+					switch ( gen )
+					{
+						case "millennial":
+							return "it's busted|skill issue lol";
+							
+						case "zoomer":
+							return "it's actually broken|nah you're just bad lol";
+							
+						case "alpha":
+							return "the %w has crazy aura|it's so sigma";
+							
+						case "boomer":
+							return "Back in my day we just had one gun.|Which one is that again?";
+					}
+					
+					break;
+					
+				case 2:
+					return "whatever, i'm using it next round|ok fair|lol";
+			}
+			
+			break;
+			
+		case 3:
+			switch ( step )
+			{
+				case 0:
+					return "who's carrying this team|who's top of the scoreboard";
+					
+				case 1:
+					return "not me lol|%f obviously|%f is carrying hard";
+					
+				case 2:
+					return "facts|we need more of that";
+			}
+			
+			break;
+			
+		case 4:
+			switch ( step )
+			{
+				case 0:
+					return "remember mw2 lobbies?|mw2 was better than this";
+					
+				case 1:
+					switch ( gen )
+					{
+						case "millennial":
+							return "best days of my life|those were the days";
+							
+						case "zoomer":
+							return "i was like 5 when that came out|never played it";
+							
+						case "alpha":
+							return "what's mw2|is that a roblox game";
+							
+						case "boomer":
+							return "I remember when it came out on disc.|My grandson played that one.";
+					}
+					
+					break;
+					
+				case 2:
+					return "ok that makes me feel old|same|lol";
+			}
+			
+			break;
+			
+		case 5:
+			switch ( step )
+			{
+				case 0:
+					return "it's so late|i should be sleeping";
+					
+				case 1:
+					switch ( gen )
+					{
+						case "millennial":
+							return "one more game|same lol";
+							
+						case "zoomer":
+							return "sleep is for the weak|bro it's 3am for me";
+							
+						case "alpha":
+							return "my mom thinks i'm asleep|i have school tomorrow";
+							
+						case "boomer":
+							return "It's past my bedtime too.|I'm usually asleep by nine.";
+					}
+					
+					break;
+					
+				case 2:
+					return "one more. always one more|lol same";
+			}
+			
+			break;
+			
+		case 6:
+			switch ( step )
+			{
+				case 0:
+					return "who's camping in that building|someone keeps camping that window";
+					
+				case 1:
+					return "not me|some guy with a sniper|probably %f lol";
+					
+				case 2:
+					return "i'm nading it|i'll flank him";
+			}
+			
+			break;
+			
+		case 7:
+			switch ( step )
+			{
+				case 0:
+					return "brb dinner|brb food";
+					
+				case 1:
+					switch ( gen )
+					{
+						case "millennial":
+							return "enjoy|bring me some";
+							
+						case "zoomer":
+							return "W food|what are you eating";
+							
+						case "alpha":
+							return "fanum tax it|save me some";
+							
+						case "boomer":
+							return "Enjoy your supper.|Don't forget to wash your hands.";
+					}
+					
+					break;
+					
+				case 2:
+					return "back|ok i'm back";
+			}
+			
+			break;
+			
+		case 8:
+			switch ( step )
+			{
+				case 0:
+					return "my aim is so off today|i can't hit anything today";
+					
+				case 1:
+					switch ( gen )
+					{
+						case "millennial":
+							return "same|warm up first";
+							
+						case "zoomer":
+							return "skill issue|lock in";
+							
+						case "alpha":
+							return "your aura is low today|mewing helps aim";
+							
+						case "boomer":
+							return "Have you tried glasses?|Try sitting closer to the screen.";
+					}
+					
+					break;
+					
+				case 2:
+					return "...i'll try that|lol";
+			}
+			
+			break;
+			
+		case 9:
+			switch ( step )
+			{
+				case 0:
+					return "what's the score|are we winning?";
+					
+				case 1:
+					return "no idea lol|it's close|check the scoreboard";
+					
+				case 2:
+					return "nice|ugh|lock in then";
+			}
+			
+			break;
+	}
+	
+	return undefined;
+}
+
+/*
+	Roughly what kind of answer a message is: yes, no, num (has a number) or any.
+*/
+classifyAnswer( msg )
+{
+	words = strtok( msg, " ,.!?" );
+	
+	if ( !words.size )
+	{
+		return "any";
+	}
+	
+	first = words[ 0 ];
+	yes = strtok( "yes,yeah,yep,ya,yup,sure,ok,okay,k,bet,y,ofc,absolutely,definitely", "," );
+	no = strtok( "no,nah,nope,n,never,naw", "," );
+	
+	for ( i = 0; i < yes.size; i++ )
+	{
+		if ( first == yes[ i ] )
+		{
+			return "yes";
+		}
+	}
+	
+	for ( i = 0; i < no.size; i++ )
+	{
+		if ( first == no[ i ] )
+		{
+			return "no";
+		}
+	}
+	
+	for ( i = 0; i < msg.size; i++ )
+	{
+		if ( issubstr( "0123456789", msg[ i ] ) )
+		{
+			return "num";
+		}
+	}
+	
+	return "any";
+}
+
+/*
+	True if this bot is in the middle of a topic with the player.
+*/
+topicActive( player )
+{
+	return ( isdefined( self.bot_real_topic ) && isdefined( self.bot_real_topic.player ) && self.bot_real_topic.player == player && !maps\mp\bots\_bot_realism::timeSince( self.bot_real_topic.time, 30000 ) );
+}
+
+/*
+	Starts a topic with a player, at the given step.
+*/
+startTopic( topic, player )
+{
+	self.bot_real_topic = spawnstruct();
+	self.bot_real_topic.name = topic;
+	self.bot_real_topic.player = player;
+	self.bot_real_topic.step = 0;
+	self.bot_real_topic.time = gettime();
+	self startConvo( player );
+}
+
+/*
+	The bot's next line in the topic, based on how the player answered. Moves the topic along.
+*/
+topicReply( msg, player )
+{
+	t = self.bot_real_topic;
+	cls = classifyAnswer( msg );
+	pool = getTopicStepPool( t.name, t.step, cls );
+	
+	if ( !isdefined( pool ) )
+	{
+		pool = getTopicStepPool( t.name, t.step, "any" );
+	}
+	
+	line = fillLine( pool, player.name, chatWeaponName( self getcurrentweapon() ) );
+	
+	t.step++;
+	t.time = gettime();
+	
+	if ( t.step >= getTopicSteps( t.name ) )
+	{
+		// a 1v1 that wasn't turned down becomes personal: the bot goes looking for them
+		if ( t.name == "1v1" && cls != "no" )
+		{
+			self maps\mp\bots\_bot_realism::setGrudgeAgainst( player );
+		}
+		
+		self.bot_real_topic = undefined;
+	}
+	
+	return line;
+}
+
+/*
+	Brings up a topic with a player by asking them something. Returns true if it did.
+*/
+openTopicWith( player )
+{
+	topic = random( strtok( getOpenerTopics(), "," ) );
+	line = fillLine( getTopicOpener( topic ), player.name );
+	
+	if ( !isdefined( line ) )
+	{
+		return false;
+	}
+	
+	self startTopic( topic, player );
+	player.bot_real_talking_to = self;
+	player.bot_real_talking_time = gettime();
+	self thread reactSpeak( line, false );
+	return true;
+}
+
+/*
+	Name of the top scorer, on the bot's team in team modes. undefined if nobody has scored.
+*/
+getTopPlayerName( bot )
+{
+	best = undefined;
+	bestScore = 0;
+	
+	for ( i = 0; i < level.players.size; i++ )
+	{
+		p = level.players[ i ];
+		
+		if ( !isdefined( p.pers[ "score" ] ) || p.pers[ "score" ] <= bestScore )
+		{
+			continue;
+		}
+		
+		if ( level.teambased && isdefined( bot ) && isdefined( bot.team ) && p.team != bot.team )
+		{
+			continue;
+		}
+		
+		best = p;
+		bestScore = p.pers[ "score" ];
+	}
+	
+	if ( !isdefined( best ) )
+	{
+		return undefined;
+	}
+	
+	return best.name;
+}
+
+/*
+	Every couple of minutes two bots have a short conversation: a question, an answer in the second bot's voice, a reply.
+*/
+botDialogueThink()
+{
+	level endon( "game_ended" );
+	
+	gameflagwait( "prematch_done" );
+	
+	weapons = strtok( "mp7,acr,type 95,pp90m1,msr,usas 12,striker,p90,scar-l,mk46", "," );
+	
+	for ( ;; )
+	{
+		wait randomintrange( 70, 140 );
+		
+		if ( !getdvarint( "bots_real_reactive" ) || !getdvarint( "bots_real_banter" ) || getdvarfloat( "bots_main_chat" ) <= 0 )
+		{
+			continue;
+		}
+		
+		// don't talk over a flame war
+		if ( isdefined( level.bots_flamewar ) && level.bots_flamewar )
+		{
+			continue;
+		}
+		
+		a = pickChatBot();
+		
+		if ( !isdefined( a ) || randomint( 100 ) >= 70 * a getChattiness() * getdvarfloat( "bots_main_chat" ) )
+		{
+			continue;
+		}
+		
+		b = pickChatBot( undefined, a );
+		
+		if ( !isdefined( b ) )
+		{
+			continue;
+		}
+		
+		d = randomint( getDialogueCount() );
+		weap = random( weapons );
+		top = getTopPlayerName( a );
+		
+		for ( i = 0; i < getDialogueSteps( d ); i++ )
+		{
+			speaker = a;
+			other = b;
+			
+			if ( getDialogueRole( d, i ) == "b" )
+			{
+				speaker = b;
+				other = a;
+			}
+			
+			if ( !isdefined( speaker ) || !isdefined( other ) )
+			{
+				break;
+			}
+			
+			line = fillLine( speaker getDialoguePool( d, i ), other.name, weap, top );
+			
+			// its own thread, so a bot leaving mid-sentence can't end the dialogue loop
+			if ( isdefined( line ) )
+			{
+				speaker thread BotDoChat( 100, line, undefined, "reply" );
+			}
+			
+			wait randomfloatrange( 4.5, 6 );
+		}
+	}
 }
 
 /*

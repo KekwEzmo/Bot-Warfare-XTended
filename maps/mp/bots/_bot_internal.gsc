@@ -156,6 +156,7 @@ resetBotVars()
 	self.bot.real_surprise_until = undefined;
 	self.bot.real_preaim = undefined;
 	self.bot.real_preaim_until = 0;
+	self.bot.real_spray_start = undefined;
 	
 	self BotBuiltinBotStop();
 }
@@ -1203,17 +1204,26 @@ stance_loop()
 {
 	toStance = "stand";
 	
+	// only waypoints that ask for a stance change it; grenade, tube, claymore, javelin and camp spots
+	// used to make bots crouch walk past them
 	if ( self.bot.next_wp != -1 )
 	{
-		toStance = level.waypoints[ self.bot.next_wp ].type;
+		wpType = level.waypoints[ self.bot.next_wp ].type;
+		
+		if ( isdefined( wpType ) && ( wpType == "crouch" || wpType == "prone" || wpType == "climb" ) )
+		{
+			toStance = wpType;
+		}
 	}
 	
-	if ( !isdefined( toStance ) )
+	// the random crouch is rolled when arriving somewhere, not at every waypoint along the way
+	if ( toStance == "stand" && self.bot.second_next_wp == -1 && randomint( 100 ) <= self.pers[ "bots" ][ "behavior" ][ "crouch" ] )
 	{
 		toStance = "crouch";
 	}
 	
-	if ( toStance == "stand" && randomint( 100 ) <= self.pers[ "bots" ][ "behavior" ][ "crouch" ] )
+	// #128: crouch only mode
+	if ( getdvarint( "bots_play_crouchonly" ) && toStance != "climb" )
 	{
 		toStance = "crouch";
 	}
@@ -1514,10 +1524,12 @@ targetObjUpdateTraced( obj, daDist, ent, theTime, isScriptObj, usingRemote )
 	
 	self updateAimOffset( obj, theTime );
 	
-	if ( !usingRemote )
+	// only the target the bot is aiming at needs the realism offsets
+	if ( !usingRemote && isdefined( self.bot.target ) && self.bot.target == obj )
 	{
 		self maps\mp\bots\_bot_realism::applyHumanAim( obj, ent, theTime );
 		self maps\mp\bots\_bot_realism::applySlipupAim( obj, ent, theTime );
+		self maps\mp\bots\_bot_realism::applyRecoil( obj, theTime );
 	}
 }
 
@@ -1543,9 +1555,15 @@ checkTraceForBone( myEye, bone )
 		return false;
 	}
 	
+	// the cheaper sight trace first, the bullet trace only if that passes
+	if ( !sighttracepassed( myEye, boneLoc, false, undefined ) )
+	{
+		return false;
+	}
+	
 	trace = bullettrace( myEye, boneLoc, false, undefined );
 	
-	return ( sighttracepassed( myEye, boneLoc, false, undefined ) && ( trace[ "fraction" ] >= 1.0 || trace[ "surfacetype" ] == "glass" ) );
+	return ( trace[ "fraction" ] >= 1.0 || trace[ "surfacetype" ] == "glass" );
 }
 
 /*
@@ -1692,16 +1710,27 @@ target_loop()
 			}
 			else
 			{
-				canTargetPlayer = ( ( player checkTraceForBone( myEye, "j_head" ) ||
-							player checkTraceForBone( myEye, "j_ankle_le" ) ||
-							player checkTraceForBone( myEye, "j_ankle_ri" ) )
-							
-						&& ( ignoreSmoke ||
-							SmokeTrace( myEye, player.origin, level.smokeradius ) ||
-							daDist < level.bots_maxknifedistance * 4 )
-							
-						&& ( getConeDot( player.origin, self.origin, myAngles ) >= myFov ||
-							( isObjDef && obj.trace_time ) ) );
+				// same checks as before, cheapest first: field of view, then smoke, then the traces
+				canTargetPlayer = false;
+				
+				if ( getConeDot( player.origin, self.origin, myAngles ) >= myFov || ( isObjDef && obj.trace_time ) )
+				{
+					if ( ignoreSmoke || daDist < level.bots_maxknifedistance * 4 || SmokeTrace( myEye, player.origin, level.smokeradius ) )
+					{
+						if ( player checkTraceForBone( myEye, "j_head" ) )
+						{
+							canTargetPlayer = true;
+						}
+						else if ( player checkTraceForBone( myEye, "j_ankle_le" ) )
+						{
+							canTargetPlayer = true;
+						}
+						else if ( player checkTraceForBone( myEye, "j_ankle_ri" ) )
+						{
+							canTargetPlayer = true;
+						}
+					}
+				}
 			}
 			
 			if ( isdefined( self.bot.target_this_frame ) && self.bot.target_this_frame == player )
@@ -1931,7 +1960,7 @@ watchToLook()
 			continue;
 		}
 		
-		if ( !getdvarint( "bots_play_jumpdrop" ) )
+		if ( !getdvarint( "bots_play_jumpdrop" ) || getdvarint( "bots_play_crouchonly" ) )
 		{
 			continue;
 		}
@@ -2398,6 +2427,12 @@ aim()
 */
 botFire( curweap )
 {
+	// a new burst starts when the bot stopped firing for a moment
+	if ( !isdefined( self.bot.real_spray_start ) || gettime() - self.bot.last_fire_time > 250 )
+	{
+		self.bot.real_spray_start = gettime();
+	}
+	
 	self.bot.last_fire_time = gettime();
 	
 	if ( self.bot.is_cur_full_auto )
@@ -3446,6 +3481,12 @@ stand()
 		return;
 	}
 	
+	if ( getdvarint( "bots_play_crouchonly" ) )
+	{
+		self crouch();
+		return;
+	}
+	
 	self BotBuiltinBotAction( "-gocrouch" );
 	self BotBuiltinBotAction( "-goprone" );
 }
@@ -3493,7 +3534,8 @@ botGetThirdPersonOffset( angles )
 {
 	offset = ( 0, 0, 0 );
 	
-	if ( getdvarint( "camera_thirdPerson" ) )
+	// bots_play_thirdperson_aim 0 aims from the eye like first person, in case the camera compensation is off
+	if ( getdvarint( "camera_thirdPerson" ) && getdvarint( "bots_play_thirdperson_aim" ) )
 	{
 		offset = getdvarvector( "camera_thirdPersonOffset" );
 		
@@ -3501,7 +3543,8 @@ botGetThirdPersonOffset( angles )
 		{
 			curweap = self getcurrentweapon();
 			
-			if ( ( issubstr( curweap, "_thermal" ) || weaponclass( curweap ) == "sniper" ) && !issubstr( curweap, "_acog" ) )
+			// weaponclass() doesn't call every sniper "sniper" (the Dragunov for one), so check the stat table class too
+			if ( ( issubstr( curweap, "_thermal" ) || weaponclass( curweap ) == "sniper" || getweaponclass( curweap ) == "weapon_sniper" ) && !issubstr( curweap, "_acog" ) )
 			{
 				offset = ( 0, 0, 0 );
 			}

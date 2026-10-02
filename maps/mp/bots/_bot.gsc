@@ -15,7 +15,7 @@
 */
 init()
 {
-	level.bw_version = "1.0"; // Bot Warfare XTended
+	level.bw_version = "1.1"; // Bot Warfare XTended
 	level.bw_base_version = "2.3.0"; // the Bot Warfare release it's built on
 	
 	if ( getdvar( "bots_main" ) == "" )
@@ -219,6 +219,26 @@ init()
 	if ( getdvar( "bots_play_aim" ) == "" )
 	{
 		setdvar( "bots_play_aim", true );
+	}
+	
+	if ( getdvar( "bots_play_crouchonly" ) == "" ) // bots only ever crouch (#128)
+	{
+		setdvar( "bots_play_crouchonly", false );
+	}
+	
+	if ( getdvar( "bots_play_thirdperson_aim" ) == "" ) // aim from the third person camera, 0 aims from the eye (#118)
+	{
+		setdvar( "bots_play_thirdperson_aim", true );
+	}
+	
+	if ( getdvar( "bots_skill_players" ) == "" ) // difficulty by number of human players, like "3:2,7:4,99:6" (#45)
+	{
+		setdvar( "bots_skill_players", "" );
+	}
+	
+	if ( getdvar( "bots_xp_multiplier" ) == "" ) // XP for killing a bot, above 1 gives bonus XP (#114)
+	{
+		setdvar( "bots_xp_multiplier", 1.0 );
 	}
 	
 	if ( !isdefined( game[ "botWarfare" ] ) )
@@ -524,9 +544,10 @@ auditModels()
 {
 	level.vest_boxes = [];
 	
+	// vest boxes don't appear often, twice a second is plenty (was every frame)
 	for ( ;; )
 	{
-		wait 0.05;
+		wait 0.5;
 		
 		level.vest_boxes = array_removeundefined( level.vest_boxes );
 		
@@ -1054,6 +1075,14 @@ diffBots_loop()
 	var_axis_med = getdvarint( "bots_skill_axis_med" );
 	var_skill = getdvarint( "bots_skill" );
 	
+	// #45: difficulty set by how many humans are playing
+	byPlayers = getSkillForPlayerCount();
+	
+	if ( isdefined( byPlayers ) )
+	{
+		var_skill = byPlayers;
+	}
+	
 	allies_hard = 0;
 	allies_med = 0;
 	axis_hard = 0;
@@ -1145,6 +1174,44 @@ diffBots_loop()
 		
 		player.pers[ "bots" ][ "skill" ][ "base" ] = int( clamp( player.pers[ "bots" ][ "skill" ][ "base" ], min_diff, max_diff ) );
 	}
+}
+
+/*
+	Reads bots_skill_players ("3:2,7:4,99:6" means up to 3 humans skill 2, up to 7 skill 4, more skill 6)
+	and returns the skill for the current number of human players, undefined if not set.
+*/
+getSkillForPlayerCount()
+{
+	setting = getdvar( "bots_skill_players" );
+	
+	if ( setting == "" )
+	{
+		return undefined;
+	}
+	
+	humans = 0;
+	
+	for ( i = 0; i < level.players.size; i++ )
+	{
+		if ( !level.players[ i ] is_bot() )
+		{
+			humans++;
+		}
+	}
+	
+	steps = strtok( setting, "," );
+	
+	for ( i = 0; i < steps.size; i++ )
+	{
+		parts = strtok( steps[ i ], ":" );
+		
+		if ( parts.size == 2 && humans <= int( parts[ 0 ] ) )
+		{
+			return int( clamp( int( parts[ 1 ] ), 1, 7 ) );
+		}
+	}
+	
+	return undefined;
 }
 
 /*

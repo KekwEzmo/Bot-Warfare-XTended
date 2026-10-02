@@ -1,7 +1,7 @@
 @echo off
 title Bot Warfare XTended installer
 echo ==============================================
-echo    BOT WARFARE XTENDED 1.0 for PlutoniumIW5
+echo    BOT WARFARE XTENDED 1.1 for PlutoniumIW5
 echo ==============================================
 echo.
 set "IW5=%LOCALAPPDATA%\Plutonium\storage\iw5"
